@@ -19,7 +19,7 @@ There are a couple of APIs that you can sign up for if you want commercial level
 - [Optional: Setup and Fund OpenAI API Key](https://platform.openai.com/api-keys)
   - Record the API key
 
-**You will need access to a hosted Ollama instance.** A server with a NVidia RTX 3090+ with 8+ GB of VRAM is recommended.
+**You will need access to a hosted Ollama instance if you want to use Web Researcher and References Bot.** A server with a NVidia RTX 3090+ with 8+ GB of VRAM is recommended.  The RAG Chatbot can work with OpenAI ChatGPT or Anthropic Claude.
 
 You can install Ollama at [ollama.ai](http://ollama.ai). You will need to download the `phi4:14b` model (or `llama3.1:8b`, etc.).
 
@@ -42,5 +42,4 @@ We also highly recommend using Anaconda for setting up a virtual python environm
 `pip install streamlit requests python-dotenv PyPDF2 beautifulsoup4 pandas langchain langchain-community langchain-anthropic langchain-openai langchain-ollama langchain-chroma chromadb shutil jupyter`
 
 4. In each folder, rename .env_sample to .env. Edit each .env file and put in your API key values, etc.
-
 5. Run the appropriate .sh (Linux/Mac) or .bat (Windows) file. This will launch the respective web interface.
