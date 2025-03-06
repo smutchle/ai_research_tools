@@ -8,3 +8,29 @@ Collecting usage statistics. To deactivate, set browser.gatherUsageStats to fals
   Network URL: http://172.21.228.244:9095
   External URL: http://45.3.67.76:9095
 
+  Stopping...
+
+Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
+
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:9095
+  Network URL: http://172.21.228.244:9095
+  External URL: http://45.3.67.76:9095
+
+  Stopping...
+
+Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
+
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:9095
+  Network URL: http://172.21.228.244:9095
+  External URL: http://45.3.67.76:9095
+
+
+Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
+
+2025-03-06 17:28:46.414 Port 9095 is already in use

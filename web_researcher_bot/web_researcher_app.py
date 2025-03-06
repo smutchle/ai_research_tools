@@ -125,7 +125,7 @@ def generate_citation_with_llm(metadata, citation_style="APA", llm_model=None, e
         bot = OllamaChatBot(
             model=llm_model,
             end_point_url=endpoint_url,
-            temperature=0.1  # Low temperature for consistent citation formatting
+            temperature=0.1 
         )
         
         # Create a prompt for the LLM to generate a citation
@@ -244,6 +244,25 @@ def get_csv_download_link(df, filename="data.csv", text="Download CSV"):
     href = f'<a href="data:file/csv;base64,{b64}" download="{filename}">{text}</a>'
     return href
 
+def split_csv(csv_string):
+    """
+    Split a comma-separated string into a list of strings.
+    Works for single values as well.
+    
+    Args:
+        csv_string (str): A comma-separated string
+        
+    Returns:
+        list: List of individual string values
+    """
+    if not csv_string:
+        return []
+    
+    # Split the string by commas and strip whitespace
+    result = [item.strip() for item in csv_string.split(',')]
+    
+    return result
+
 # Function to check if a URL is allowed by robots.txt
 def is_url_allowed(url, respect_robots_txt):
     if not respect_robots_txt:
@@ -352,7 +371,7 @@ def generate_search_phrases(research_prompt, num_phrases=5):
         bot = OllamaChatBot(
             model=st.session_state.llm_model,
             end_point_url=st.session_state.endpoint_url,
-            temperature=0.7
+            temperature=0.5
         )
         
         # Create a prompt for the LLM to generate search phrases
@@ -591,14 +610,8 @@ with st.sidebar:
     # LLM Configuration
     st.subheader("🤖 LLM Settings")
     
-    if 'llm_model' not in st.session_state:
-        st.session_state.llm_model = "phi4:latest"
-    
-    if 'endpoint_url' not in st.session_state:
-        st.session_state.endpoint_url = os.getenv('OLLAMA_END_POINT')
-    
-    st.session_state.llm_model = st.text_input("LLM Model", value=st.session_state.llm_model)
-    st.session_state.endpoint_url = st.text_input("Endpoint URL", value=st.session_state.endpoint_url)
+    st.session_state.llm_model = st.selectbox("LLM Model", split_csv(os.getenv("OLLAMA_MODEL")))
+    st.session_state.endpoint_url = st.text_input("Endpoint URL", os.getenv('OLLAMA_END_POINT'))
     
     # Google API Configuration
     st.subheader("🔎 Google API")

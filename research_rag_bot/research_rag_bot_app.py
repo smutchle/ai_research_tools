@@ -128,24 +128,43 @@ def load_vector_store(db_path, embedding_type, embedding_model, ollama_base_url=
         st.error(f"Error loading vector store: {str(e)}")
         return None
 
+def split_csv(csv_string):
+    """
+    Split a comma-separated string into a list of strings.
+    Works for single values as well.
+    
+    Args:
+        csv_string (str): A comma-separated string
+        
+    Returns:
+        list: List of individual string values
+    """
+    if not csv_string:
+        return []
+    
+    # Split the string by commas and strip whitespace
+    result = [item.strip() for item in csv_string.split(',')]
+    
+    return result
+
 def create_llm(model_type, model_name, ollama_base_url=None):
     """Create the appropriate LLM based on model type and name"""
     if model_type == "Ollama":
         return ChatOllama(
             base_url=ollama_base_url,
             model=model_name,
-            temperature=1.0
+            temperature=0.0
         )
     elif model_type == "OpenAI":
         return ChatOpenAI(
             model=model_name,
-            temperature=1.0,
+            temperature=0.0,
             openai_api_key=os.getenv("OPENAI_API_KEY")
         )
     elif model_type == "Anthropic":
         return ChatAnthropic(
             model=model_name,
-            temperature=1.0,
+            temperature=0.0,
             anthropic_api_key=os.getenv("CLAUDE_API_KEY")
         )
     else:
@@ -409,20 +428,20 @@ with st.sidebar:
     if model_type == "Ollama":
         model_name = st.selectbox(
             "Select Ollama Model",
-            [os.getenv('OLLAMA_MODEL')],
+            split_csv(os.getenv('OLLAMA_MODEL')),
             index=0
         )
         ollama_base_url = st.text_input("Ollama Base URL", os.getenv("OLLAMA_END_POINT"))
     elif model_type == "OpenAI":
         model_name = st.selectbox(
             "Select OpenAI Model",
-            ["gpt-o1", "gpt-4o", "gpt-4.5"],
+            split_csv(os.getenv['OPENAI_MODEL']),
             index=1
         )
     elif model_type == "Anthropic":
         model_name = st.selectbox(
             "Select Anthropic Model",
-            ["claude-3-5-sonnet-latest"],
+            split_csv(os.getenv("ANTHROPIC_MODEL")),
             index=0
         )
     

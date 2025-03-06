@@ -177,6 +177,26 @@ def get_download_link(df, filename, text):
     href = f'<a href="data:file/csv;base64,{b64}" download="{filename}">{text}</a>'
     return href
 
+def split_csv(csv_string):
+    """
+    Split a comma-separated string into a list of strings.
+    Works for single values as well.
+    
+    Args:
+        csv_string (str): A comma-separated string
+        
+    Returns:
+        list: List of individual string values
+    """
+    if not csv_string:
+        return []
+    
+    # Split the string by commas and strip whitespace
+    result = [item.strip() for item in csv_string.split(',')]
+    
+    return result
+
+
 def main():
     load_dotenv(os.getcwd() + "/.env")
 
@@ -186,9 +206,9 @@ def main():
     st.sidebar.header("Settings")
     pdf_folder = st.sidebar.text_input("PDF Directory", os.getenv('SOURCE_PDF_DIR'))
     ollama_endpoint = st.sidebar.text_input("Ollama Endpoint URL", os.getenv('OLLAMA_END_POINT'))
-    ollama_model = st.sidebar.text_input("Ollama Model", os.getenv('OLLAMA_MODEL'))
+    ollama_model = st.sidebar.selectbox("Ollama Model", split_csv(os.getenv('OLLAMA_MODEL')))
     chunk_size = st.sidebar.slider("References per chunk", 1, 10, 5)    
-    temperature = 1.0
+    temperature = 0.5
     
     # Initialize the chatbot
     try:
