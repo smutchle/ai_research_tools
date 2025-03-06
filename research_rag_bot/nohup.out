@@ -1,0 +1,14 @@
+
+Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
+
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:9595
+  Network URL: http://172.21.228.244:9595
+  External URL: http://45.3.67.76:9595
+
+/home/smutchle/Work/data_science/ai_research_tools/research_rag_bot/research_rag_bot_app.py:134: LangChainDeprecationWarning: The class `ChatOllama` was deprecated in LangChain 0.3.1 and will be removed in 1.0.0. An updated version of the class exists in the :class:`~langchain-ollama package and should be used instead. To use it run `pip install -U :class:`~langchain-ollama` and import as `from :class:`~langchain_ollama import ChatOllama``.
+  return ChatOllama(
+/home/smutchle/Work/data_science/ai_research_tools/research_rag_bot/research_rag_bot_app.py:160: LangChainDeprecationWarning: Please see the migration guide at: https://python.langchain.com/docs/versions/migrating_memory/
+  memory = ConversationBufferMemory(
