@@ -413,12 +413,12 @@ if 'chunk_overlap' not in st.session_state:
 
 # Title and description
 st.title("🤖 RAG Chatbot")
-st.markdown("Ask questions about your documents and get AI-powered answers!")
+st.markdown("Ask questions about your documents.")
 
 # Sidebar for configuration
 with st.sidebar:
     # Document retrieval settings
-    st.subheader("Document Processing & Retrieval Settings")
+    st.subheader("Vector DB Settings")
 
     # Input for documents directory
     docs_dir = st.text_input("Documents Directory", os.getenv("SOURCE_DOC_DIR"))
