@@ -417,13 +417,11 @@ st.markdown("Ask questions about your documents and get AI-powered answers!")
 
 # Sidebar for configuration
 with st.sidebar:
-    st.header("Configuration")
-    
-    # Input for documents directory
-    docs_dir = st.text_input("Documents Directory", os.getenv("SOURCE_DOC_DIR"))
-    
     # Document retrieval settings
     st.subheader("Document Processing & Retrieval Settings")
+
+    # Input for documents directory
+    docs_dir = st.text_input("Documents Directory", os.getenv("SOURCE_DOC_DIR"))
     
     # Chunk size slider
     chunk_size = st.slider(
@@ -458,6 +456,8 @@ with st.sidebar:
     )
     st.session_state.k_value = k_value
     
+    build_db = st.button("🔨 Build Vector Database")
+
     st.subheader("LLM Settings")
 
     # Model selection
@@ -508,10 +508,7 @@ with st.sidebar:
     print("Using: ", db_path, " for vector database...")
     
     col1, col2 = st.columns(2)
-    with col1:
-        build_db = st.button("🔨 Build Vector Database")
-    with col2:
-        reset_chat = st.button("🔄 Reset Chat")
+    reset_chat = st.button("🔄 Reset Chat")
         
     # Handle chat reset
     if reset_chat:
