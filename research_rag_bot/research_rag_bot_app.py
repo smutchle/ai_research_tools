@@ -206,6 +206,20 @@ def initialize_conversation(vector_store, model_type, model_name, k_value=10, ol
         st.error(f"Error initializing conversation: {str(e)}")
         return None, None, None
 
+def extract_markdown_content(text: str, type: str = "json") -> str:
+        start = f"""```{type}"""
+        end = """```"""
+
+        start_idx = text.find(start)
+        end_idx = text.rfind(end)
+
+        if start_idx >= 0 and end_idx >= 0:
+            start_idx += len(type) + 3
+            end_idx -= 1
+            return (text[start_idx:end_idx]).strip()
+
+        return text.strip()
+
 # Function to execute chain of thought reasoning with preserved context
 def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
     # Initial prompt to get chain of thought planning
@@ -245,24 +259,19 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
     # Get the plan
     plan_response = llm.invoke(initial_prompt)
     plan_text = plan_response.content
-    
+
     # Extract JSON plan
     try:
-        # Find JSON object in the text (it may be embedded in other text)
-        import re
-        json_match = re.search(r'({[\s\S]*})', plan_text)
-        if json_match:
-            plan_json = json.loads(json_match.group(1))
-        else:
-            # Fallback - try to parse the whole response
-            plan_json = json.loads(plan_text)
+        json_str = extract_markdown_content(plan_text)
+        print("plan:", json_str)
+        plan_json = json.loads(json_str)
     except:
         # If JSON parsing fails, create a default plan
         plan_json = {
             "reasoning_steps": ["Step 1: Analyze the question", 
                                 "Step 2: Review contextual information", 
-                                "Step 3: Formulate answer", 
-                                "Step 4: Verify and conclude"],
+                                "Step 3: Formulate answer that generates the expected output from the original prompt", 
+                                "Step 4: Output results exactly as specified in the original prompt"],
             "total_steps": 4
         }
     
@@ -285,22 +294,33 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
         current_step = steps[i]
         
         # Create prompt for this step with the growing context
-        step_prompt = f"""
-        System: You are solving a problem step by step. Focus only on the current step.
-        
-        Context information:
-        {growing_context}
-        
-        User question: {prompt}
-        
-        Previous steps completed:
-        {' '.join(step_output)}
-        
-        Current step to execute: {current_step}
-        
-        Provide your detailed reasoning for this step only. Be thorough but focused.
-        """
-        
+        if i < total_steps:
+            step_prompt = f"""
+            System: You are solving a problem step by step. 
+            
+            Context information:
+            {growing_context}
+            
+            User question: {prompt}
+            
+            Previous steps completed:
+            {' '.join(step_output)}
+            
+            Current step to execute: {current_step}
+            
+            Provide your detailed reasoning for this step.
+            """
+        else:
+            step_prompt = f"""
+            Context information:
+            {growing_context}
+            
+            Previous steps completed:
+            {' '.join(step_output)}
+            
+            Now answer this prompt exactly using the reasoning and context given: {prompt}
+            """
+
         # Get response for this step
         step_response = llm.invoke(step_prompt)
         step_result = step_response.content
