@@ -46,7 +46,7 @@ Query: {query}
 
 Text passage: {passage}
 
-Rate this passage on a scale from 1 to 10 based on directly useful it is to specifically answering the query.
+Rate this passage on a scale from 0 to 10 based on how directly useful it is to specifically answering the query.
 A score of 0 means not useful, and 10 means it will aide in answering the question directly.
 
 Reply with only a number between 0 and 10."""
@@ -96,73 +96,19 @@ Reply with only a number between 0 and 10."""
         prompt = self.prompt_template.format(query=query, passage=passage)
         
         try:
-            # First, try using the completeAsJSON method
-            json_response = self.llm_bot.completeAsJSON(prompt)
+            response = self.llm_bot.complete(prompt).strip()
             
-            if json_response:
-                try:
-                    response_data = json.loads(json_response)
-                    
-                    # Handle case where response is a list
-                    if isinstance(response_data, list) and len(response_data) > 0:
-                        response_data = response_data[0]
-                    
-                    # Handle case where response is a dictionary
-                    if isinstance(response_data, dict):
-                        score = float(response_data.get("score", 0))
-                        reasoning = response_data.get("reasoning", "")
-                        return (score, reasoning)
-                    else:
-                        print(f"Unexpected response format: {type(response_data)}")
-                except (json.JSONDecodeError, ValueError) as e:
-                    print(f"Error parsing JSON response, falling back to regular completion: {e}")
-                    # Fall through to regular completion
-            
-            # If JSON parsing failed, try regular completion and extract JSON
-            regular_response = self.llm_bot.complete(prompt)
-            
-            # Try to extract JSON from response text
-            match = re.search(r'```json\s*(.*?)\s*```', regular_response, re.DOTALL)
+            # First try to find an exact number response
+            match = re.search(r'^\s*(\d+(?:\.\d+)?)\s*$', response)
             if match:
-                json_str = match.group(1)
-                try:
-                    response_data = json.loads(json_str)
-                    
-                    # Handle case where response is a list
-                    if isinstance(response_data, list) and len(response_data) > 0:
-                        response_data = response_data[0]
-                    
-                    # Handle case where response is a dictionary
-                    if isinstance(response_data, dict):
-                        score = float(response_data.get("score", 0))
-                        reasoning = response_data.get("reasoning", "")
-                        return (score, reasoning)
-                except (json.JSONDecodeError, ValueError) as e:
-                    print(f"Error parsing extracted JSON: {e}")
-                    
-            # Try to directly extract score with regex
-            score_match = re.search(r'"score"\s*:\s*(\d+(?:\.\d+)?)', regular_response)
-            if score_match:
-                try:
-                    score = float(score_match.group(1))
-                    # Try to extract reasoning too
-                    reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"]+)"', regular_response)
-                    reasoning = reasoning_match.group(1) if reasoning_match else "No reasoning provided"
-                    return (score, reasoning)
-                except ValueError:
-                    print("Error converting score to float")
+                return (float(match.group(1)), "Direct score")
             
-            # Final fallback: try to find just a number in the response
-            number_match = re.search(r'(\d+(?:\.\d+)?)\s*/\s*10', regular_response)
-            if not number_match:
-                number_match = re.search(r'score.*?(\d+(?:\.\d+)?)', regular_response, re.IGNORECASE)
-            if number_match:
-                try:
-                    score = float(number_match.group(1))
-                    return (score, "Score extracted from text response")
-                except ValueError:
-                    print("Error converting extracted number to float")
-        
+            # If exact match failed, try to find any number in the response
+            match = re.search(r'(\d+(?:\.\d+)?)', response)
+            if match:
+                return (float(match.group(1)), f"Extracted score from: {response[:50]}...")
+            
+            print(f"Could not extract numeric score from response: {response[:100]}...")
         except Exception as e:
             print(f"Error in relevance scoring: {e}")
         
@@ -272,11 +218,21 @@ if __name__ == "__main__":
     # Create an instance of OllamaChatBot
     llm_bot = OllamaChatBot(model="phi4:latest", end_point_url="http://localhost:11434", temperature=0.0)
     
-    # Set a very simple prompt to test
-    simple_prompt = """Rate how relevant this passage is to the query on a scale of 0-10.
+    # Use a prompt that explicitly asks for just a number with clear scoring criteria
+    simple_prompt = """Rate how directly relevant this passage is to answering the query on a scale of 0-10.
 Query: {query}
 Passage: {passage}
-Score (0-10): """
+
+Scoring guide:
+- 0-2: Not relevant or only mentions keywords without addressing the query
+- 3-5: Somewhat relevant but doesn't directly answer the query
+- 6-8: Relevant and partially answers the query
+- 9-10: Highly relevant and directly answers the query
+
+For example, if the query is about Python and the passage only mentions AI or other programming languages without specifically addressing Python, it should receive a low score (0-2).
+
+Your answer must be ONLY a single number between 0 and 10, with no other text.
+Score: """
     
     # Initialize reranker with the simple prompt
     reranker = LLMReranker(
