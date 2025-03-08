@@ -17,7 +17,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
-from langchain_community.chat_models import ChatOllama
+from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain.memory import ConversationBufferMemory
@@ -28,9 +28,34 @@ import chromadb
 import pandas as pd
 import time
 
-# Load environment variables from .env file
-load_dotenv(os.getcwd() + "/.env")
+# Set page config
+st.set_page_config(
+    page_title="RAG Chatbot", 
+    page_icon="🤖",
+    layout="wide"  # Use wide layout for more space
+)
 
+# Load environment variables from .env file
+load_dotenv(os.path.join(os.getcwd(), ".env"))
+
+def split_csv(csv_string):
+    """
+    Split a comma-separated string into a list of strings.
+    Works for single values as well.
+    
+    Args:
+        csv_string (str): A comma-separated string
+        
+    Returns:
+        list: List of individual string values
+    """
+    if not csv_string:
+        return []
+    
+    # Split the string by commas and strip whitespace
+    result = [item.strip() for item in csv_string.split(',')]
+    return result
+    
 def create_embeddings(embedding_type, embedding_model, ollama_base_url=None):
     """Create the appropriate embedding model based on type"""
     if embedding_type == "Ollama":
@@ -68,10 +93,10 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
             st.error("No documents were loaded. Please check your directory path.")
             return None
         
-        # Split documents into chunks
+        # Split documents into chunks using the configured chunk size and overlap
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=2000,
-            chunk_overlap=200,
+            chunk_size=st.session_state.chunk_size,
+            chunk_overlap=st.session_state.chunk_overlap,
             length_function=len,
             is_separator_regex=False
         )
@@ -94,7 +119,7 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
             embedding=embeddings,
             persist_directory=db_path,
             client=client,
-            collection_name="rag_docs"
+            collection_name="knowledge_docs"
         )
         return vector_store
     
@@ -121,31 +146,12 @@ def load_vector_store(db_path, embedding_type, embedding_model, ollama_base_url=
             persist_directory=db_path,
             embedding_function=embeddings,
             client=client,
-            collection_name="rag_docs"
+            collection_name="knowledge_docs"
         )
         return vector_store
     except Exception as e:
         st.error(f"Error loading vector store: {str(e)}")
         return None
-
-def split_csv(csv_string):
-    """
-    Split a comma-separated string into a list of strings.
-    Works for single values as well.
-    
-    Args:
-        csv_string (str): A comma-separated string
-        
-    Returns:
-        list: List of individual string values
-    """
-    if not csv_string:
-        return []
-    
-    # Split the string by commas and strip whitespace
-    result = [item.strip() for item in csv_string.split(',')]
-    
-    return result
 
 def create_llm(model_type, model_name, ollama_base_url=None):
     """Create the appropriate LLM based on model type and name"""
@@ -153,24 +159,24 @@ def create_llm(model_type, model_name, ollama_base_url=None):
         return ChatOllama(
             base_url=ollama_base_url,
             model=model_name,
-            temperature=0.0
+            temperature=0.7
         )
     elif model_type == "OpenAI":
         return ChatOpenAI(
             model=model_name,
-            temperature=0.0,
+            temperature=0.7,
             openai_api_key=os.getenv("OPENAI_API_KEY")
         )
     elif model_type == "Anthropic":
         return ChatAnthropic(
             model=model_name,
-            temperature=0.0,
+            temperature=0.7,
             anthropic_api_key=os.getenv("CLAUDE_API_KEY")
         )
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-def initialize_conversation(vector_store, model_type, model_name, ollama_base_url=None):
+def initialize_conversation(vector_store, model_type, model_name, k_value=10, ollama_base_url=None):
     """Initialize the conversation chain"""
     try:
         # Create the LLM
@@ -181,9 +187,9 @@ def initialize_conversation(vector_store, model_type, model_name, ollama_base_ur
             return_messages=True
         )
         
-        # Create retriever
+        # Create retriever with customizable k parameter
         retriever = vector_store.as_retriever(
-            search_kwargs={"k": 3}
+            search_kwargs={"k": k_value}
         )
         
         # Make the chain verbose so we can see prompts in stdout
@@ -254,7 +260,7 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
         # If JSON parsing fails, create a default plan
         plan_json = {
             "reasoning_steps": ["Step 1: Analyze the question", 
-                                "Step 2: Research relevant information", 
+                                "Step 2: Review contextual information", 
                                 "Step 3: Formulate answer", 
                                 "Step 4: Verify and conclude"],
             "total_steps": 4
@@ -387,13 +393,6 @@ def get_download_link(qmd_content, filename="chat_export.qmd"):
     href = f'<a href="data:text/markdown;base64,{b64}" download="{filename}">Download Conversation as Quarto Document</a>'
     return href
 
-# Set page config
-st.set_page_config(
-    page_title="RAG Chatbot", 
-    page_icon="🤖",
-    layout="wide"  # Use wide layout for more space
-)
-
 # Initialize session state variables
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
@@ -405,18 +404,62 @@ if 'llm' not in st.session_state:
     st.session_state.llm = None
 if 'retriever' not in st.session_state:
     st.session_state.retriever = None
+if 'k_value' not in st.session_state:
+    st.session_state.k_value = 10
+if 'chunk_size' not in st.session_state:
+    st.session_state.chunk_size = 2000
+if 'chunk_overlap' not in st.session_state:
+    st.session_state.chunk_overlap = 200
 
 # Title and description
 st.title("🤖 RAG Chatbot")
-st.markdown("Ask questions about your documents!")
+st.markdown("Ask questions about your documents and get AI-powered answers!")
 
 # Sidebar for configuration
 with st.sidebar:
     st.header("Configuration")
     
     # Input for documents directory
-    docs_dir = st.text_input("Documents Directory", os.getenv('SOURCE_DOC_DIR'))
+    docs_dir = st.text_input("Documents Directory", os.getenv("SOURCE_DOC_DIR"))
     
+    # Document retrieval settings
+    st.subheader("Document Processing & Retrieval Settings")
+    
+    # Chunk size slider
+    chunk_size = st.slider(
+        "Chunk Size",
+        min_value=500,
+        max_value=8000,
+        value=2000,
+        step=100,
+        help="Size of text chunks when processing documents (in characters)"
+    )
+    st.session_state.chunk_size = chunk_size
+    
+    # Chunk overlap slider
+    chunk_overlap = st.slider(
+        "Chunk Overlap",
+        min_value=0,
+        max_value=1000,
+        value=200,
+        step=50,
+        help="Amount of overlap between consecutive chunks (in characters)"
+    )
+    st.session_state.chunk_overlap = chunk_overlap
+    
+    # K value slider
+    k_value = st.slider(
+        "Number of retrieved documents (K)",
+        min_value=1,
+        max_value=50,
+        value=3,
+        step=1,
+        help="Controls how many relevant documents to retrieve for each query"
+    )
+    st.session_state.k_value = k_value
+    
+    st.subheader("LLM Settings")
+
     # Model selection
     model_type = st.selectbox(
         "Select Model Provider",
@@ -428,15 +471,15 @@ with st.sidebar:
     if model_type == "Ollama":
         model_name = st.selectbox(
             "Select Ollama Model",
-            split_csv(os.getenv('OLLAMA_MODEL')),
+            split_csv(os.getenv("OLLAMA_MODEL")),
             index=0
         )
         ollama_base_url = st.text_input("Ollama Base URL", os.getenv("OLLAMA_END_POINT"))
     elif model_type == "OpenAI":
         model_name = st.selectbox(
             "Select OpenAI Model",
-            split_csv(os.getenv['OPENAI_MODEL']),
-            index=1
+            split_csv(os.getenv("OPENAI_MODEL")),
+            index=0
         )
     elif model_type == "Anthropic":
         model_name = st.selectbox(
@@ -461,7 +504,9 @@ with st.sidebar:
     use_cot = st.checkbox("Use Chain of Thought", value=False)
     
     # Database operations
-    db_path = "vectorstore"
+    db_path = os.path.join(docs_dir, "vectorstore")
+    print("Using: ", db_path, " for vector database...")
+    
     col1, col2 = st.columns(2)
     with col1:
         build_db = st.button("🔨 Build Vector Database")
@@ -476,6 +521,7 @@ with st.sidebar:
                 st.session_state.vector_store, 
                 model_type, 
                 model_name,
+                st.session_state.k_value,
                 ollama_base_url if model_type == "Ollama" else None
             )
             st.session_state.conversation = conversation
@@ -551,6 +597,7 @@ if build_db:
                 vector_store, 
                 model_type, 
                 model_name,
+                st.session_state.k_value,
                 ollama_base_url if model_type == "Ollama" else None
             )
             st.session_state.conversation = conversation
@@ -572,6 +619,7 @@ if not st.session_state.vector_store and os.path.exists(db_path):
                 vector_store, 
                 model_type, 
                 model_name,
+                st.session_state.k_value,
                 ollama_base_url if model_type == "Ollama" else None
             )
             st.session_state.conversation = conversation
@@ -584,15 +632,9 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("API Key Status")
     
-    ollama_base_url = os.getenv("OLLAMA_END_POINT")
     openai_key = os.getenv("OPENAI_API_KEY")
     claude_key = os.getenv("CLAUDE_API_KEY")
     
-    if ollama_base_url:
-        st.success("Ollama URL: Loaded ✅")
-    else:
-        st.error("Ollama URL: Missing ❌")
-
     if openai_key:
         st.success("OpenAI API Key: Loaded ✅")
     else:
@@ -621,11 +663,12 @@ with st.sidebar:
     st.markdown("""
     ### Instructions
     1. Enter the path to your documents directory
-    2. Select your preferred model provider and model
-    3. Select your embedding model
-    4. Click 'Build Vector Database' if this is your first time or you want to rebuild
-    5. Toggle 'Use Chain of Thought' if you want to see step-by-step reasoning
-    6. Start chatting! 🚀
+    2. Adjust the document processing settings (chunk size, overlap, and K value)
+    3. Select your preferred model provider and model
+    4. Select your embedding model
+    5. Click 'Build Vector Database' if this is your first time or you want to rebuild
+    6. Toggle 'Use Chain of Thought' if you want to see step-by-step reasoning
+    7. Start chatting! 🚀
     
     Note: The system will process PDF, TXT, JSON, JSONL, CSV, and Jupyter Notebook files in the specified directory.
     """)
@@ -637,14 +680,28 @@ if st.session_state.vector_store:
         if message["role"] == "user":
             st.chat_message("user", avatar="🧑").write(message["content"])
         else:
-            st.chat_message("assistant", avatar="🧪").write(message["content"])
+            st.chat_message("assistant", avatar="🤖").write(message["content"])
     
     # Chat input
-    if prompt := st.chat_input("Ask a question about about your documents..."):
+    if prompt := st.chat_input("Ask a question about your documents..."):
         st.chat_message("user", avatar="🧑").write(prompt)
         
         # Add user message to chat history
         st.session_state.chat_history.append({"role": "user", "content": prompt})
+        
+        # Check if K value has changed and reinitialize if needed
+        if st.session_state.retriever and st.session_state.retriever.search_kwargs.get("k") != st.session_state.k_value:
+            if st.session_state.vector_store:
+                conversation, llm, retriever = initialize_conversation(
+                    st.session_state.vector_store, 
+                    model_type, 
+                    model_name,
+                    st.session_state.k_value,
+                    ollama_base_url if model_type == "Ollama" else None
+                )
+                st.session_state.conversation = conversation
+                st.session_state.llm = llm
+                st.session_state.retriever = retriever
         
         # Process based on Chain of Thought setting
         if use_cot and st.session_state.llm and st.session_state.retriever:
@@ -657,7 +714,7 @@ if st.session_state.vector_store:
                 )
                 
                 # Display assistant response
-                st.chat_message("assistant", avatar="🧪").write(final_answer)
+                st.chat_message("assistant", avatar="🤖").write(final_answer)
                 
                 # Add assistant response to chat history
                 st.session_state.chat_history.append({"role": "assistant", "content": final_answer})
@@ -670,7 +727,7 @@ if st.session_state.vector_store:
                 answer = response["answer"]
                 
                 # Display assistant response
-                st.chat_message("assistant", avatar="🧪").write(answer)
+                st.chat_message("assistant", avatar="🤖").write(answer)
                 
                 # Add assistant response to chat history
                 st.session_state.chat_history.append({"role": "assistant", "content": answer})
