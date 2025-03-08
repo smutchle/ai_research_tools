@@ -4,8 +4,6 @@ from dotenv import load_dotenv
 import json
 import datetime
 import base64
-from langchain.chains import ConversationalRetrievalChain
-from OllamaChatBot import OllamaChatBot
 
 from langchain_community.document_loaders import (
     DirectoryLoader, 
@@ -23,13 +21,12 @@ from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain.memory import ConversationBufferMemory
-from LLMReranker import LLMReranker
+from langchain.chains import ConversationalRetrievalChain
 import shutil
 from chromadb import Settings
 import chromadb
 import pandas as pd
 import time
-from langchain.schema import Document
 
 # Set page config
 st.set_page_config(
@@ -162,127 +159,69 @@ def create_llm(model_type, model_name, ollama_base_url=None):
         return ChatOllama(
             base_url=ollama_base_url,
             model=model_name,
-            temperature=0.5
+            temperature=0.7
         )
     elif model_type == "OpenAI":
         return ChatOpenAI(
             model=model_name,
-            temperature=0.5,
+            temperature=0.7,
             openai_api_key=os.getenv("OPENAI_API_KEY")
         )
     elif model_type == "Anthropic":
         return ChatAnthropic(
             model=model_name,
-            temperature=0.5,
+            temperature=0.7,
             anthropic_api_key=os.getenv("CLAUDE_API_KEY")
         )
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
-    
-def extract_markdown_content(text: str, type: str = "json") -> str:
-    """Extract content from markdown code blocks"""
-    start = f"""```{type}"""
-    end = """```"""
 
-    start_idx = text.find(start)
-    end_idx = text.rfind(end)
-
-    if start_idx >= 0 and end_idx >= 0:
-        start_idx += len(type) + 3
-        end_idx -= 1
-        return (text[start_idx:end_idx]).strip()
-
-    return text.strip()
-
-# Function to rerank documents using LLMReranker
-def rerank_documents(reranker, documents, query):
-    """
-    Rerank documents using LLMReranker
-    
-    Args:
-        reranker: LLMReranker instance 
-        documents: List of retrieved documents
-        query: User query
-        
-    Returns:
-        List of reranked documents
-    """
-    # Convert LangChain documents to format expected by LLMReranker
-    reranker_docs = []
-    for doc in documents:
-        reranker_docs.append({
-            "text": doc.page_content,
-            "metadata": doc.metadata
-        })
-    
-    # Rerank documents
-    ranked_chunks = reranker.rerank(query, reranker_docs)
-    
-    # Convert back to LangChain document format
-    reranked_docs = []
-    
-    for chunk in ranked_chunks:
-        doc = Document(
-            page_content=chunk["passage"],
-            metadata=chunk["metadata"]
-        )
-        reranked_docs.append(doc)
-    
-    return reranked_docs
-
-# Function to process a query and generate a response
-def process_query(llm, retriever, reranker, memory, prompt):
-    """Process a query using retrieval and reranking"""
+def initialize_conversation(vector_store, model_type, model_name, k_value=10, ollama_base_url=None):
+    """Initialize the conversation chain"""
     try:
-        # Get initial documents from retriever
-        initial_docs = retriever.get_relevant_documents(prompt)
+        # Create the LLM
+        llm = create_llm(model_type, model_name, ollama_base_url)
         
-        # Rerank documents
-        reranked_docs = rerank_documents(reranker, initial_docs, prompt)
+        memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True
+        )
         
-        # Format context from reranked documents
-        context = "\n\n".join([doc.page_content for doc in reranked_docs])
+        # Create retriever with customizable k parameter
+        retriever = vector_store.as_retriever(
+            search_kwargs={"k": k_value}
+        )
         
-        # Get chat history as formatted string
-        chat_history = ""
-        if memory.chat_memory.messages:
-            for message in memory.chat_memory.messages:
-                role = "User" if message.type == "human" else "Assistant"
-                chat_history += f"{role}: {message.content}\n"
+        # Make the chain verbose so we can see prompts in stdout
+        conversation = ConversationalRetrievalChain.from_llm(
+            llm=llm,
+            retriever=retriever,
+            memory=memory,
+            verbose=True
+        )
         
-        # Generate prompt with context and chat history
-        final_prompt = f"""
-        Answer the following question based on the provided context and chat history:
-        
-        Chat History:
-        {chat_history}
-        
-        Context:
-        {context}
-        
-        Question: {prompt}
-        
-        Please provide a comprehensive and accurate answer based on the information in the context.
-        """
-        
-        # Get response
-        response = llm.invoke(final_prompt)
-        answer = response.content
-        
-        # Update memory with the new exchange
-        memory.chat_memory.add_user_message(prompt)
-        memory.chat_memory.add_ai_message(answer)
-        
-        return answer, reranked_docs
+        return conversation, llm, retriever
     
     except Exception as e:
-        error_message = f"Error processing query: {str(e)}"
-        st.error(error_message)
-        return error_message, []
+        st.error(f"Error initializing conversation: {str(e)}")
+        return None, None, None
+
+def extract_markdown_content(text: str, type: str = "json") -> str:
+        start = f"""```{type}"""
+        end = """```"""
+
+        start_idx = text.find(start)
+        end_idx = text.rfind(end)
+
+        if start_idx >= 0 and end_idx >= 0:
+            start_idx += len(type) + 3
+            end_idx -= 1
+            return (text[start_idx:end_idx]).strip()
+
+        return text.strip()
 
 # Function to execute chain of thought reasoning with preserved context
-def execute_chain_of_thought(llm, retriever, reranker, prompt, max_steps=5):
-    """Execute chain of thought reasoning with reranking"""
+def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
     # Initial prompt to get chain of thought planning
     cot_system_prompt = """
     You are a helpful assistant that thinks through problems step by step.
@@ -301,13 +240,9 @@ def execute_chain_of_thought(llm, retriever, reranker, prompt, max_steps=5):
     Use as many steps as needed for the problem.
     """
     
-    # Get the initial documents
-    initial_docs = retriever.get_relevant_documents(prompt)
-    
-    # Perform reranking
-    reranked_docs = rerank_documents(reranker, initial_docs, prompt)
-    
-    context = "\n\n".join([doc.page_content for doc in reranked_docs])
+    # Get the relevant documents
+    retrieved_docs = retriever.get_relevant_documents(prompt)
+    context = "\n\n".join([doc.page_content for doc in retrieved_docs])
     
     # Initial prompt with context
     initial_prompt = f"""
@@ -328,6 +263,7 @@ def execute_chain_of_thought(llm, retriever, reranker, prompt, max_steps=5):
     # Extract JSON plan
     try:
         json_str = extract_markdown_content(plan_text)
+        print("plan:", json_str)
         plan_json = json.loads(json_str)
     except:
         # If JSON parsing fails, create a default plan
@@ -393,6 +329,7 @@ def execute_chain_of_thought(llm, retriever, reranker, prompt, max_steps=5):
         step_output.append(f"Step {i+1}: {step_result}")
         
         # Add this step's reasoning to the growing context
+        # This is the key change - we're updating the context with each step's output
         growing_context += f"\n\nStep {i+1} reasoning: {step_result}"
         
         # Display intermediate step
@@ -428,7 +365,7 @@ def execute_chain_of_thought(llm, retriever, reranker, prompt, max_steps=5):
     final_response = llm.invoke(final_prompt)
     final_answer = final_response.content
     
-    return final_answer, step_output, reranked_docs
+    return final_answer, step_output
 
 def convert_chat_to_qmd(chat_history):
     """
@@ -479,81 +416,68 @@ def get_download_link(qmd_content, filename="chat_export.qmd"):
 # Initialize session state variables
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'conversation' not in st.session_state:
+    st.session_state.conversation = None
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
 if 'llm' not in st.session_state:
     st.session_state.llm = None
 if 'retriever' not in st.session_state:
     st.session_state.retriever = None
-if 'reranker' not in st.session_state:
-    st.session_state.reranker = None
-if 'memory' not in st.session_state:
-    st.session_state.memory = None
-if 'initial_chunks' not in st.session_state:
-    st.session_state.initial_chunks = 50
-if 'top_n' not in st.session_state:
-    st.session_state.top_n = 10
+if 'k_value' not in st.session_state:
+    st.session_state.k_value = 10
 if 'chunk_size' not in st.session_state:
-    st.session_state.chunk_size = 1000
+    st.session_state.chunk_size = 2000
 if 'chunk_overlap' not in st.session_state:
     st.session_state.chunk_overlap = 200
-if 'reranker_chunk_size' not in st.session_state:
-    st.session_state.reranker_chunk_size = 1000
-if 'reranker_chunk_overlap' not in st.session_state:
-    st.session_state.reranker_chunk_overlap = 200
-if 'batch_size' not in st.session_state:
-    st.session_state.batch_size = 5
-
-# Add this to your session state initialization section after the memory initialization
-if 'conversation' not in st.session_state:
-    st.session_state.conversation = None
-
-# Then modify the initialize_rag_components function to create and return the conversation chain
-def initialize_rag_components(vector_store, model_type, model_name, ollama_base_url=None):
-    """Initialize the RAG components: LLM, retriever, reranker, memory, and conversation chain"""
-    try:
-        # Create the LLM
-        llm = create_llm(model_type, model_name, ollama_base_url)
-        
-        # Create memory for conversation history
-        memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
-        
-        # Create retriever - no k parameter as reranker handles this
-        retriever = vector_store.as_retriever()
-        
-        # Create LLMReranker (always uses OllamaChatBot)
-        reranker = LLMReranker(
-            llm_bot=OllamaChatBot(model_name, ollama_base_url, 0.0),
-            chunk_size=st.session_state.reranker_chunk_size,
-            chunk_overlap=st.session_state.reranker_chunk_overlap,
-            initial_chunks=st.session_state.initial_chunks,
-            top_n=st.session_state.top_n,
-            batch_size=st.session_state.batch_size
-        )
-        
-        # Create a ConversationalRetrievalChain
-        conversation = ConversationalRetrievalChain.from_llm(
-            llm=llm,
-            retriever=retriever,
-            memory=memory,
-            return_source_documents=True
-        )
-        
-        return llm, retriever, reranker, memory, conversation
-    
-    except Exception as e:
-        st.error(f"Error initializing RAG components: {str(e)}")
-        return None, None, None, None, None
 
 # Title and description
 st.title("🤖 RAG Chatbot")
-st.markdown("Ask questions about your documents with LLM reranking.")
+st.markdown("Ask questions about your documents.")
 
 # Sidebar for configuration
 with st.sidebar:
+    # Document retrieval settings
+    st.subheader("Vector DB Settings")
+
+    # Input for documents directory
+    docs_dir = st.text_input("Documents Directory", os.getenv("SOURCE_DOC_DIR"))
+    
+    # Chunk size slider
+    chunk_size = st.slider(
+        "Chunk Size",
+        min_value=500,
+        max_value=8000,
+        value=2000,
+        step=100,
+        help="Size of text chunks when processing documents (in characters)"
+    )
+    st.session_state.chunk_size = chunk_size
+    
+    # Chunk overlap slider
+    chunk_overlap = st.slider(
+        "Chunk Overlap",
+        min_value=0,
+        max_value=1000,
+        value=200,
+        step=50,
+        help="Amount of overlap between consecutive chunks (in characters)"
+    )
+    st.session_state.chunk_overlap = chunk_overlap
+    
+    # K value slider
+    k_value = st.slider(
+        "Number of retrieved documents (K)",
+        min_value=1,
+        max_value=50,
+        value=3,
+        step=1,
+        help="Controls how many relevant documents to retrieve for each query"
+    )
+    st.session_state.k_value = k_value
+    
+    build_db = st.button("🔨 Build Vector Database")
+
     st.subheader("LLM Settings")
 
     # Model selection
@@ -577,48 +501,13 @@ with st.sidebar:
             split_csv(os.getenv("OPENAI_MODEL")),
             index=0
         )
-        ollama_base_url = None
     elif model_type == "Anthropic":
         model_name = st.selectbox(
             "Select Anthropic Model",
             split_csv(os.getenv("ANTHROPIC_MODEL")),
             index=0
         )
-        ollama_base_url = None
     
-    # Add Chain of Thought option
-    use_cot = st.checkbox("Use Chain of Thought", value=False)
-
-    reset_chat = st.button("🔄 Reset Chat")
-
-    # Document retrieval settings
-    st.subheader("Docs & Chunking")
-
-    # Input for documents directory
-    docs_dir = st.text_input("Documents Directory", os.getenv("SOURCE_DOC_DIR"))
-    
-    # Chunk size slider
-    chunk_size = st.slider(
-        "Chunk Size",
-        min_value=500,
-        max_value=8000,
-        value=1000,
-        step=100,
-        help="Size of text chunks when processing documents (in characters)"
-    )
-    st.session_state.chunk_size = chunk_size
-    
-    # Chunk overlap slider
-    chunk_overlap = st.slider(
-        "Chunk Overlap",
-        min_value=0,
-        max_value=1000,
-        value=200,
-        step=50,
-        help="Amount of overlap between consecutive chunks (in characters)"
-    )
-    st.session_state.chunk_overlap = chunk_overlap
-
     # Embedding model selection
     embedding_type = st.selectbox(
         "Select Embedding Model",
@@ -630,85 +519,31 @@ with st.sidebar:
         embedding_model = st.text_input("Ollama Embedding Model", "nomic-embed-text:latest")
     else:
         embedding_model = st.text_input("OpenAI Embedding Model", "text-embedding-3-small")
-
-    build_db = st.button("🔨 Build/Rebuild Vector Database")
-
-    # LLM Reranking settings
-    st.subheader("LLM Reranking Settings")
-
-    # Initial chunks slider
-    initial_chunks = st.slider(
-        "Initial chunks to retrieve",
-        min_value=10,
-        max_value=100,
-        value=50,
-        step=5,
-        help="Controls how many initial chunks to retrieve before reranking"
-    )
-    st.session_state.initial_chunks = initial_chunks
     
-    # Top N slider
-    top_n = st.slider(
-        "Top N chunks to retain",
-        min_value=1,
-        max_value=20,
-        value=10,
-        step=1,
-        help="Number of top chunks to keep after reranking"
-    )
-    st.session_state.top_n = top_n
-    
-    # Reranker chunk size slider
-    reranker_chunk_size = st.slider(
-        "Reranker Chunk Size",
-        min_value=500,
-        max_value=4000,
-        value=1000,
-        step=100,
-        help="Size of text chunks for reranking"
-    )
-    st.session_state.reranker_chunk_size = reranker_chunk_size
-    
-    # Reranker chunk overlap slider
-    reranker_chunk_overlap = st.slider(
-        "Reranker Chunk Overlap",
-        min_value=0,
-        max_value=500,
-        value=200,
-        step=50,
-        help="Amount of overlap between consecutive chunks for reranking"
-    )
-    st.session_state.reranker_chunk_overlap = reranker_chunk_overlap
-    
-    # Batch size slider
-    batch_size = st.slider(
-        "Batch Size",
-        min_value=1,
-        max_value=10,
-        value=5,
-        step=1,
-        help="Number of chunks to process in a sub-ranking batch"
-    )
-    st.session_state.batch_size = batch_size
+    # Add Chain of Thought option
+    use_cot = st.checkbox("Use Chain of Thought", value=False)
     
     # Database operations
     db_path = os.path.join(docs_dir, "vectorstore")
-     
+    print("Using: ", db_path, " for vector database...")
+    
+    col1, col2 = st.columns(2)
+    reset_chat = st.button("🔄 Reset Chat")
+        
     # Handle chat reset
     if reset_chat:
         st.session_state.chat_history = []
         if st.session_state.vector_store:
-            llm, retriever, reranker, memory, conversation = initialize_rag_components(
+            conversation, llm, retriever = initialize_conversation(
                 st.session_state.vector_store, 
                 model_type, 
                 model_name,
+                st.session_state.k_value,
                 ollama_base_url if model_type == "Ollama" else None
             )
+            st.session_state.conversation = conversation
             st.session_state.llm = llm
             st.session_state.retriever = retriever
-            st.session_state.reranker = reranker
-            st.session_state.memory = memory
-            st.session_state.conversation = conversation
         st.rerun()
 
 def get_document_loaders(docs_dir):
@@ -774,17 +609,17 @@ if build_db:
         if vector_store:
             st.session_state.vector_store = vector_store
             st.success("Vector database built successfully!")
-            llm, retriever, reranker, memory, conversation = initialize_rag_components(
+            # Initialize conversation with new vector store
+            conversation, llm, retriever = initialize_conversation(
                 vector_store, 
                 model_type, 
                 model_name,
+                st.session_state.k_value,
                 ollama_base_url if model_type == "Ollama" else None
             )
+            st.session_state.conversation = conversation
             st.session_state.llm = llm
             st.session_state.retriever = retriever
-            st.session_state.reranker = reranker
-            st.session_state.memory = memory
-            st.session_state.conversation = conversation
 
 # Load existing database if it exists and we haven't loaded it yet
 if not st.session_state.vector_store and os.path.exists(db_path):
@@ -797,17 +632,16 @@ if not st.session_state.vector_store and os.path.exists(db_path):
         )
         if vector_store:
             st.session_state.vector_store = vector_store
-            llm, retriever, reranker, memory, conversation = initialize_rag_components(
+            conversation, llm, retriever = initialize_conversation(
                 vector_store, 
                 model_type, 
                 model_name,
+                st.session_state.k_value,
                 ollama_base_url if model_type == "Ollama" else None
             )
+            st.session_state.conversation = conversation
             st.session_state.llm = llm
             st.session_state.retriever = retriever
-            st.session_state.reranker = reranker
-            st.session_state.memory = memory
-            st.session_state.conversation = conversation
             st.success("Existing vector database loaded successfully!")
 
 # Display API key status
@@ -840,20 +674,18 @@ with st.sidebar:
         else:
             st.warning("No chat history to export yet.")
 
-
 # Add helpful information in the sidebar
 with st.sidebar:
     st.markdown("---")
     st.markdown("""
     ### Instructions
     1. Enter the path to your documents directory
-    2. Adjust the document processing settings (chunk size, overlap, and initial chunks to retrieve)
-    3. Configure LLM Reranking settings
-    4. Select your preferred model provider and model
-    5. Select your embedding model
-    6. Click 'Build Vector Database' if this is your first time or you want to rebuild
-    7. Toggle 'Use Chain of Thought' if you want to see step-by-step reasoning
-    8. Start chatting! 🚀
+    2. Adjust the document processing settings (chunk size, overlap, and K value)
+    3. Select your preferred model provider and model
+    4. Select your embedding model
+    5. Click 'Build Vector Database' if this is your first time or you want to rebuild
+    6. Toggle 'Use Chain of Thought' if you want to see step-by-step reasoning
+    7. Start chatting! 🚀
     
     Note: The system will process PDF, TXT, JSON, JSONL, CSV, and Jupyter Notebook files in the specified directory.
     """)
@@ -874,14 +706,27 @@ if st.session_state.vector_store:
         # Add user message to chat history
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         
+        # Check if K value has changed and reinitialize if needed
+        if st.session_state.retriever and st.session_state.retriever.search_kwargs.get("k") != st.session_state.k_value:
+            if st.session_state.vector_store:
+                conversation, llm, retriever = initialize_conversation(
+                    st.session_state.vector_store, 
+                    model_type, 
+                    model_name,
+                    st.session_state.k_value,
+                    ollama_base_url if model_type == "Ollama" else None
+                )
+                st.session_state.conversation = conversation
+                st.session_state.llm = llm
+                st.session_state.retriever = retriever
+        
         # Process based on Chain of Thought setting
         if use_cot and st.session_state.llm and st.session_state.retriever:
             with st.spinner("Thinking step by step..."):
                 # Execute chain of thought reasoning
-                final_answer, step_outputs, reranked_docs = execute_chain_of_thought(
+                final_answer, step_outputs = execute_chain_of_thought(
                     st.session_state.llm,
                     st.session_state.retriever,
-                    st.session_state.reranker,
                     prompt
                 )
                 
@@ -892,16 +737,11 @@ if st.session_state.vector_store:
                 st.session_state.chat_history.append({"role": "assistant", "content": final_answer})
         
         # Regular conversation flow (without CoT)
-        else:  # Not using Chain of Thought
+        elif st.session_state.conversation:
             with st.spinner("Thinking..."):
-                # Process the query using our process_query function
-                answer, reranked_docs = process_query(
-                    st.session_state.llm,
-                    st.session_state.retriever,
-                    st.session_state.reranker,
-                    st.session_state.memory,
-                    prompt
-                )
+                # Execute query
+                response = st.session_state.conversation({"question": prompt})
+                answer = response["answer"]
                 
                 # Display assistant response
                 st.chat_message("assistant", avatar="🤖").write(answer)
