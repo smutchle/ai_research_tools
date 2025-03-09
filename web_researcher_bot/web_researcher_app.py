@@ -20,16 +20,6 @@ from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv(os.getcwd() + "/.env")
-
-# Set page title and configuration
-st.set_page_config(
-    page_title="Scientific Web Crawler/Scraper",
-    page_icon="🔍",
-    layout="wide"
-)
-# App title and description
-st.title("🔬 Scientific Web Crawler/Scraper 🌐")
-st.write("🔍 This tool helps gather information for scientific research by searching the web for relevant content.")
 # New function to extract metadata using the LLM
 def extract_paper_metadata_with_llm(text, url, llm_model, endpoint_url):
     """
@@ -151,6 +141,38 @@ def generate_citation_with_llm(metadata, citation_style="APA", llm_model=None, e
         st.error(f"Error generating citation with LLM: {str(e)}")
         # Fall back to traditional citation generator
         return generate_citation(metadata)
+
+# Function to clean CSV data by replacing special characters with spaces
+def clean_csv_references(df):
+    """
+    Clean the references in a DataFrame by replacing special characters with spaces
+    
+    Parameters:
+    df (pandas.DataFrame): DataFrame containing references
+    
+    Returns:
+    pandas.DataFrame: DataFrame with cleaned references
+    """
+    # Make a copy of the DataFrame to avoid modifying the original
+    cleaned_df = df.copy()
+    
+    # Replace special characters with spaces in the first column (references)
+    if cleaned_df.shape[1] > 0:  # Ensure there's at least one column
+        # Convert any non-string values to strings first
+        cleaned_df.iloc[:, 0] = cleaned_df.iloc[:, 0].astype(str)
+        
+        # Replace underscore, ampersand, and hyphen with spaces
+        cleaned_df.iloc[:, 0] = cleaned_df.iloc[:, 0].str.replace('_', ' ')
+        cleaned_df.iloc[:, 0] = cleaned_df.iloc[:, 0].str.replace('&', ' ')
+        cleaned_df.iloc[:, 0] = cleaned_df.iloc[:, 0].str.replace('-', ' ')
+        
+        # Remove extra spaces (multiple spaces -> single space)
+        cleaned_df.iloc[:, 0] = cleaned_df.iloc[:, 0].str.replace(r'\s+', ' ', regex=True)
+        
+        # Trim leading/trailing whitespace
+        cleaned_df.iloc[:, 0] = cleaned_df.iloc[:, 0].str.strip()
+        
+    return cleaned_df
 
 # Add this function after your other utility functions (e.g., after save_binary_pdf)
 def display_pdf_in_ui(pdf_path):
@@ -603,6 +625,273 @@ def save_binary_pdf(pdf_content, output_path, filename):
         st.error(f"Error saving PDF: {str(e)}")
         return None
 
+# New function to format a safe filename from metadata
+def format_safe_filename(metadata):
+    """
+    Create a safe filename from paper metadata
+    
+    Parameters:
+    metadata (dict): Dictionary containing paper metadata
+    
+    Returns:
+    str: Safe filename in format: year_authors_title
+    """
+    # Extract year, fallback to 'unknown' if not present
+    year = metadata.get('year', 'unknown')
+    
+    # Process authors: convert to lowercase, replace spaces with underscores
+    authors = metadata.get('authors', 'unknown_author')
+    # Keep only the first author's last name, or first two words
+    if ',' in authors:
+        first_author = authors.split(',')[0].strip()
+    else:
+        author_parts = authors.split()
+        first_author = author_parts[-1] if len(author_parts) > 0 else "unknown"
+    
+    # Process title: lowercase, max 50 chars, replace spaces with underscores
+    title = metadata.get('title', 'untitled')
+    title = title[:50]  # Limit title length
+    
+    # Combine and sanitize
+    filename = f"{year}_{first_author}_{title}"
+    # Replace invalid characters and multiple spaces/underscores
+    filename = re.sub(r'[\\/*?:"<>|]', "", filename)  # Remove invalid chars
+    filename = re.sub(r'\s+', "_", filename)  # Replace spaces with underscores
+    filename = re.sub(r'_+', "_", filename)  # Replace multiple underscores with single
+    
+    return filename.lower() + '.pdf'
+
+# New function to verify if a PDF matches a reference
+def verify_pdf_matches_reference(pdf_content, reference, llm_model, endpoint_url):
+    """
+    Verify if a PDF matches a given reference using LLM
+    
+    Parameters:
+    pdf_content (bytes): The binary content of the PDF
+    reference (str): The reference text to match against
+    llm_model (str): The LLM model to use
+    endpoint_url (str): Endpoint URL for the LLM service
+    
+    Returns:
+    bool: True if the PDF matches the reference, False otherwise
+    """
+    try:
+        # Extract text from the first few pages of the PDF
+        pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_content))
+        
+        # Get text from first 3 pages or all pages if fewer than 3
+        sample_text = ""
+        for i in range(min(3, len(pdf_reader.pages))):
+            page_text = pdf_reader.pages[i].extract_text() or ""
+            sample_text += page_text
+            
+        # Limit sample text length (first 3000 characters)
+        sample_text = sample_text[:3000]
+        
+        # Initialize the OllamaChatBot
+        bot = OllamaChatBot(
+            model=llm_model,
+            end_point_url=endpoint_url,
+            temperature=0.1  # Low temperature for more consistent outputs
+        )
+        
+        # Create a prompt for the LLM to verify the match
+        system_prompt = f"""
+        You are a scientific reference matching system. Your task is to determine if the provided PDF 
+        excerpt matches the given academic reference.
+        
+        Reference: {reference}
+        
+        PDF excerpt (first portion of the document):
+        ```
+        {sample_text}
+        ```
+        
+        Analyze if this PDF is likely the document described in the reference. Consider:
+        1. Do author names match or appear in the PDF?
+        2. Does the title or key terms from it appear in the PDF?
+        3. Is the publication year consistent?
+        4. Does the content seem relevant to the reference topic?
+        
+        Return only a JSON object with this format:
+        {{"match": true/false, "confidence": "high"/"medium"/"low", "reason": "brief explanation"}}
+        """
+        
+        # Get JSON response from the LLM
+        json_response = bot.completeAsJSON(system_prompt)
+        
+        # Parse the JSON response
+        result = json.loads(json_response)
+        
+        # Return match status, with a fallback if JSON parsing fails
+        return result.get('match', False)
+            
+    except Exception as e:
+        st.error(f"Error verifying PDF match: {str(e)}")
+        return False  # By default, don't consider it a match if verification fails
+
+# Function to process a reference CSV
+def process_reference_csv(csv_file, api_key, search_engine_id, llm_model, endpoint_url, 
+                         respect_robots_txt, politeness_delay, output_path, max_results_per_ref=3):
+    """
+    Process a CSV file of references to find matching PDFs
+    
+    Parameters:
+    csv_file: The uploaded CSV file
+    api_key: Google API key
+    search_engine_id: Google Custom Search Engine ID
+    llm_model: LLM model to use for verification
+    endpoint_url: LLM endpoint URL
+    respect_robots_txt: Whether to respect robots.txt
+    politeness_delay: Delay between requests
+    output_path: Where to save PDFs
+    max_results_per_ref: Maximum search results to try per reference
+    
+    Returns:
+    list: List of successful matches with metadata
+    """
+    try:
+        # Read the CSV file
+        df = pd.read_csv(csv_file)
+        
+        # Check if the CSV has at least one column
+        if df.shape[1] < 1:
+            return [], "CSV file must have at least one column with references"
+
+        df = clean_csv_references(df)
+        
+        # Assume the first column contains the references
+        references = df.iloc[:, 0].tolist()
+        
+        # Process each reference
+        results = []
+        for i, reference in enumerate(references):
+            with st.expander(f"Processing reference {i+1}: {reference[:100]}..."):
+                st.write(f"Searching for: {reference[:100]}...")
+                
+                # Search Google for the reference
+                search_results, error = search_google(reference, api_key, search_engine_id, num_results=max_results_per_ref)
+                
+                if error:
+                    st.error(f"Error searching for reference: {error}")
+                    continue
+                    
+                if not search_results:
+                    st.warning("No search results found for this reference")
+                    continue
+                
+                # Try each search result until a match is found
+                match_found = False
+                for title, url in search_results:
+                    st.write(f"Trying: {title} ({url})")
+                    
+                    # Download PDF if direct link
+                    if url.lower().endswith('.pdf'):
+                        pdf_content, error = download_pdf(url, respect_robots_txt, politeness_delay)
+                        
+                        if pdf_content:
+                            # Verify if the PDF matches the reference
+                            if verify_pdf_matches_reference(pdf_content, reference, llm_model, endpoint_url):
+                                # Extract metadata from PDF and reference
+                                extracted_text = extract_text_from_pdf(pdf_content)
+                                metadata = extract_paper_metadata_with_llm(
+                                    extracted_text, url, llm_model, endpoint_url
+                                )
+                                
+                                # Create a filename based on the metadata
+                                filename = format_safe_filename(metadata)
+                                saved_path = save_binary_pdf(pdf_content, output_path, filename)
+                                
+                                if saved_path:
+                                    results.append({
+                                        "Reference": reference,
+                                        "Title": metadata.get('title', title),
+                                        "Authors": metadata.get('authors', ''),
+                                        "Year": metadata.get('year', ''),
+                                        "File Path": saved_path,
+                                        "Source URL": url
+                                    })
+                                    match_found = True
+                                    st.success(f"✅ Match found and saved as: {filename}")
+                                    break
+                            else:
+                                st.info("PDF didn't match the reference, trying next result...")
+                                
+                    # If not a direct PDF, scrape the page for PDF links
+                    else:
+                        content, pdf_links, original_pdf = scrape_webpage(url, respect_robots_txt, politeness_delay)
+                        
+                        # Check if the URL returned a PDF directly
+                        if original_pdf:
+                            if verify_pdf_matches_reference(original_pdf, reference, llm_model, endpoint_url):
+                                extracted_text = extract_text_from_pdf(original_pdf)
+                                metadata = extract_paper_metadata_with_llm(
+                                    extracted_text, url, llm_model, endpoint_url
+                                )
+                                
+                                filename = format_safe_filename(metadata)
+                                saved_path = save_binary_pdf(original_pdf, output_path, filename)
+                                
+                                if saved_path:
+                                    results.append({
+                                        "Reference": reference,
+                                        "Title": metadata.get('title', title),
+                                        "Authors": metadata.get('authors', ''),
+                                        "Year": metadata.get('year', ''),
+                                        "File Path": saved_path,
+                                        "Source URL": url
+                                    })
+                                    match_found = True
+                                    st.success(f"✅ Match found and saved as: {filename}")
+                                    break
+                        
+                        # Check PDF links from the page
+                        if isinstance(pdf_links, list) and pdf_links:
+                            for pdf_title, pdf_url in pdf_links:
+                                st.write(f"Checking PDF link: {pdf_title}")
+                                pdf_content, error = download_pdf(pdf_url, respect_robots_txt, politeness_delay)
+                                
+                                if pdf_content and verify_pdf_matches_reference(pdf_content, reference, llm_model, endpoint_url):
+                                    extracted_text = extract_text_from_pdf(pdf_content)
+                                    metadata = extract_paper_metadata_with_llm(
+                                        extracted_text, pdf_url, llm_model, endpoint_url
+                                    )
+                                    
+                                    filename = format_safe_filename(metadata)
+                                    saved_path = save_binary_pdf(pdf_content, output_path, filename)
+                                    
+                                    if saved_path:
+                                        results.append({
+                                            "Reference": reference,
+                                            "Title": metadata.get('title', pdf_title),
+                                            "Authors": metadata.get('authors', ''),
+                                            "Year": metadata.get('year', ''),
+                                            "File Path": saved_path,
+                                            "Source URL": pdf_url
+                                        })
+                                        match_found = True
+                                        st.success(f"✅ Match found and saved as: {filename}")
+                                        break
+                            
+                            # Break the search results loop if we found a match
+                            if match_found:
+                                break
+                
+                if not match_found:
+                    st.warning("❌ No matching PDF found for this reference")
+        
+        return results, None
+        
+    except Exception as e:
+        return [], f"Error processing reference CSV: {str(e)}"
+
+# Set page title and configuration
+st.set_page_config(
+    page_title="Scientific Web Crawler/Scraper",
+    page_icon="🔍",
+    layout="wide"
+)
+
 # Sidebar configuration
 with st.sidebar:
     st.header("⚙️ Configuration")
@@ -643,7 +932,11 @@ with st.sidebar:
     output_path = st.text_input("Output folder", value=os.getenv("OUTPUT_DIR"))
 
 # Main content area
-research_prompt = st.text_area("Enter your research prompt:", height=150)
+st.title("🔬 Scientific Web Crawler/Scraper 🌐")
+st.write("🔍 This tool helps gather information for scientific research by searching the web for relevant content.")
+
+# Create tabs for different search modes
+tab1, tab2 = st.tabs(["📝 Search by Topics", "📋 Search by Reference CSV"])
 
 # Initialize results container
 if 'results' not in st.session_state:
@@ -653,141 +946,232 @@ if 'results' not in st.session_state:
 if 'scientific_papers' not in st.session_state:
     st.session_state.scientific_papers = []
 
-if st.button("🚀 Start Research"):
-    if not research_prompt:
-        st.error("Please enter a research prompt")
-    elif not api_key:
-        st.error("Google API key not found. Please add it to the .env file.")
-    else:
-        # Clear previous results
-        st.session_state.results = {}
-        
-        # Show progress
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Step 1: Generate search phrases
-        status_text.text("Generating search phrases...")
-        search_phrases = generate_search_phrases(research_prompt, num_phrases=num_search_phrases)
-        
-        if search_phrases:
-            st.write("### 🔤 Search Phrases Generated")
-            for i, phrase in enumerate(search_phrases):
-                st.write(f"{i+1}. {phrase}")
-                
-            # Step 2: Search Google for each phrase
-            all_search_results = []
-            search_error = None
+# Tab 1: Original search by topics functionality
+with tab1:
+    research_prompt = st.text_area("Enter your research prompt:", height=150)
+    
+    if st.button("🚀 Start Topic Research"):
+        if not research_prompt:
+            st.error("Please enter a research prompt")
+        elif not api_key:
+            st.error("Google API key not found. Please add it to the .env file.")
+        else:
+            # Clear previous results
+            st.session_state.results = {}
             
-            for i, phrase in enumerate(search_phrases):
-                status_text.text(f"Searching for: {phrase}...")
-                progress_bar.progress((i / len(search_phrases)) * 0.2)  # First 20% of progress
-                
-                search_results, error = search_google(phrase, api_key, search_engine_id, num_results=num_search_results)
-                
-                if error:
-                    search_error = error
-                    break
-                    
-                if search_results:
-                    all_search_results.extend(search_results)
+            # Show progress
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-            # If we encountered an error during search, show it
-            if search_error:
-                st.error(f"Error during Google search: {search_error}")
-            else:
-                # Remove duplicates
-                unique_results = []
-                seen_urls = set()
-                for title, url in all_search_results:
-                    if url not in seen_urls:
-                        unique_results.append((title, url))
-                        seen_urls.add(url)
+            # Step 1: Generate search phrases
+            status_text.text("Generating search phrases...")
+            search_phrases = generate_search_phrases(research_prompt, num_phrases=num_search_phrases)
+            
+            if search_phrases:
+                st.write("### 🔤 Search Phrases Generated")
+                for i, phrase in enumerate(search_phrases):
+                    st.write(f"{i+1}. {phrase}")
                     
-            # Step 3: Scrape each result to find PDFs
-            if unique_results:
-                st.write(f"### 🔗 Found {len(unique_results)} unique results")
+                # Step 2: Search Google for each phrase
+                all_search_results = []
+                search_error = None
                 
-                # Create a container for the scraped content
-                content_container = st.container()
-                
-                # Process each result
-                pdf_files_found = []  # Track all PDF files (direct and linked)
-                
-                for i, (title, url) in enumerate(unique_results):
-                    status_text.text(f"Processing: {title}...")
-                    progress_bar.progress(0.2 + (i / len(unique_results)) * 0.6)  # 20% to 80% of progress
+                for i, phrase in enumerate(search_phrases):
+                    status_text.text(f"Searching for: {phrase}...")
+                    progress_bar.progress((i / len(search_phrases)) * 0.2)  # First 20% of progress
                     
-                    # Check if the URL is a direct PDF
-                    if url.lower().endswith('.pdf'):
-                        status_text.text(f"Downloading PDF: {title}...")
-                        pdf_content, error = download_pdf(url, respect_robots_txt, politeness_delay)
+                    search_results, error = search_google(phrase, api_key, search_engine_id, num_results=num_search_results)
+                    
+                    if error:
+                        search_error = error
+                        break
                         
-                        if pdf_content:
-                            # Save the PDF
-                            pdf_filename = f"pdf_{i+1}_{title.replace(' ', '_')[:30]}"
-                            saved_path = save_binary_pdf(pdf_content, output_path, pdf_filename)
-                            
-                            if saved_path:
-                                pdf_files_found.append((title, saved_path, url))
-                        continue
-                    
-                    # Scrape the webpage to find PDF links
-                    content, pdf_links, original_pdf = scrape_webpage(url, respect_robots_txt, politeness_delay)
-                    
-                    # If the URL was a PDF (but didn't have .pdf extension)
-                    if original_pdf:
-                        file_name = f"pdf_{i+1}_{title.replace(' ', '_')[:30]}"
-                        pdf_path = save_binary_pdf(original_pdf, output_path, file_name)
+                    if search_results:
+                        all_search_results.extend(search_results)
+                
+                # If we encountered an error during search, show it
+                if search_error:
+                    st.error(f"Error during Google search: {search_error}")
+                else:
+                    # Remove duplicates
+                    unique_results = []
+                    seen_urls = set()
+                    for title, url in all_search_results:
+                        if url not in seen_urls:
+                            unique_results.append((title, url))
+                            seen_urls.add(url)
                         
-                        if pdf_path:
-                            pdf_files_found.append((title, pdf_path, url))
-                                
-                    # Process any PDF links found
-                    if isinstance(pdf_links, list) and pdf_links:
-                        for pdf_title, pdf_url in pdf_links:
-                            status_text.text(f"Downloading PDF: {pdf_title}...")
-                            
-                            # Download the PDF
-                            pdf_content, error = download_pdf(pdf_url, respect_robots_txt, politeness_delay)
+                # Step 3: Scrape each result to find PDFs
+                if unique_results:
+                    st.write(f"### 🔗 Found {len(unique_results)} unique results")
+                    
+                    # Create a container for the scraped content
+                    content_container = st.container()
+                    
+                    # Process each result
+                    pdf_files_found = []  # Track all PDF files (direct and linked)
+                    
+                    for i, (title, url) in enumerate(unique_results):
+                        status_text.text(f"Processing: {title}...")
+                        progress_bar.progress(0.2 + (i / len(unique_results)) * 0.6)  # 20% to 80% of progress
+                        
+                        # Check if the URL is a direct PDF
+                        if url.lower().endswith('.pdf'):
+                            status_text.text(f"Downloading PDF: {title}...")
+                            pdf_content, error = download_pdf(url, respect_robots_txt, politeness_delay)
                             
                             if pdf_content:
-                                # Save the PDF file
-                                pdf_filename = f"pdf_{i+1}_{pdf_title.replace(' ', '_')[:30]}"
-                                saved_path = save_binary_pdf(pdf_content, output_path, pdf_filename)
+                                # Extract metadata using LLM
+                                extracted_text = extract_text_from_pdf(pdf_content)
+                                if is_scientific_paper(extracted_text):
+                                    metadata = extract_paper_metadata_with_llm(
+                                        extracted_text, url, st.session_state.llm_model, st.session_state.endpoint_url
+                                    )
+                                    
+                                    # Create a filename based on the metadata
+                                    filename = format_safe_filename(metadata)
+                                    saved_path = save_binary_pdf(pdf_content, output_path, filename)
+                                    
+                                    if saved_path:
+                                        pdf_files_found.append((metadata.get('title', title), saved_path, url))
+                            continue
+                        
+                        # Scrape the webpage to find PDF links
+                        content, pdf_links, original_pdf = scrape_webpage(url, respect_robots_txt, politeness_delay)
+                        
+                        # If the URL was a PDF (but didn't have .pdf extension)
+                        if original_pdf:
+                            extracted_text = extract_text_from_pdf(original_pdf)
+                            if is_scientific_paper(extracted_text):
+                                metadata = extract_paper_metadata_with_llm(
+                                    extracted_text, url, st.session_state.llm_model, st.session_state.endpoint_url
+                                )
                                 
-                                if saved_path:
-                                    pdf_files_found.append((pdf_title, saved_path, pdf_url))
-            
-                # Display results
-                status_text.text("Finalizing results...")
-                progress_bar.progress(1.0)
+                                filename = format_safe_filename(metadata)
+                                pdf_path = save_binary_pdf(original_pdf, output_path, filename)
+                                
+                                if pdf_path:
+                                    pdf_files_found.append((metadata.get('title', title), pdf_path, url))
+                                    
+                        # Process any PDF links found
+                        if isinstance(pdf_links, list) and pdf_links:
+                            for pdf_title, pdf_url in pdf_links:
+                                status_text.text(f"Downloading PDF: {pdf_title}...")
+                                
+                                # Download the PDF
+                                pdf_content, error = download_pdf(pdf_url, respect_robots_txt, politeness_delay)
+                                
+                                if pdf_content:
+                                    extracted_text = extract_text_from_pdf(pdf_content)
+                                    if is_scientific_paper(extracted_text):
+                                        metadata = extract_paper_metadata_with_llm(
+                                            extracted_text, pdf_url, st.session_state.llm_model, st.session_state.endpoint_url
+                                        )
+                                        
+                                        filename = format_safe_filename(metadata)
+                                        saved_path = save_binary_pdf(pdf_content, output_path, filename)
+                                        
+                                        if saved_path:
+                                            pdf_files_found.append((metadata.get('title', pdf_title), saved_path, pdf_url))
                 
-                # Show final results
-                with content_container:
-                    if pdf_files_found:
-                        st.write("### 📊 Research Results")
-                        st.write(f"**{len(pdf_files_found)} PDFs found and downloaded:**")
-                        
-                        # Create a dataframe for better display
-                        pdf_df = pd.DataFrame(pdf_files_found, columns=["Title", "File Path", "Source URL"])
-                        st.dataframe(pdf_df)
-                        
-                        # Create download button for CSV of PDFs
-                        csv = pdf_df.to_csv(index=False)
-                        b64 = base64.b64encode(csv.encode()).decode()
-                        href = f'<a href="data:file/csv;base64,{b64}" download="found_pdfs.csv">📥 Download PDF list as CSV</a>'
-                        st.markdown(href, unsafe_allow_html=True)
-                    else:
-                        st.warning("No PDF files were found for the given search phrases.")
+                    # Display results
+                    status_text.text("Finalizing results...")
+                    progress_bar.progress(1.0)
+                    
+                    # Show final results
+                    with content_container:
+                        if pdf_files_found:
+                            st.write("### 📊 Research Results")
+                            st.write(f"**{len(pdf_files_found)} PDFs found and downloaded:**")
                             
-                status_text.text("🎉 PDF search completed!")
+                            # Create a dataframe for better display
+                            pdf_df = pd.DataFrame(pdf_files_found, columns=["Title", "File Path", "Source URL"])
+                            st.dataframe(pdf_df)
+                            
+                            # Create download button for CSV of PDFs
+                            csv = pdf_df.to_csv(index=False)
+                            b64 = base64.b64encode(csv.encode()).decode()
+                            href = f'<a href="data:file/csv;base64,{b64}" download="found_pdfs.csv">📥 Download PDF list as CSV</a>'
+                            st.markdown(href, unsafe_allow_html=True)
+                        else:
+                            st.warning("No PDF files were found for the given search phrases.")
+                                
+                    status_text.text("🎉 PDF search completed!")
+                else:
+                    st.warning("No search results found for the given search phrases.")
             else:
-                st.warning("No search results found for the given search phrases.")
-        else:
-            st.error("Failed to generate search phrases. Please try a different research prompt.")
+                st.error("Failed to generate search phrases. Please try a different research prompt.")
 
-# Add this code at the end of your file, before the footer section
+# Tab 2: New CSV-based reference search functionality
+with tab2:
+    st.write("Upload a CSV file with references in the first column")
+    
+    # File uploader for CSV
+    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+    
+    if uploaded_file is not None:
+        # Preview the CSV
+        try:
+            df_preview = pd.read_csv(uploaded_file)
+            st.write("Preview of first 5 references:")
+            st.dataframe(df_preview.iloc[:5, 0].reset_index(drop=True))
+            
+            # Reset the file pointer to the beginning
+            uploaded_file.seek(0)
+        except Exception as e:
+            st.error(f"Error reading CSV: {str(e)}")
+    
+    max_refs_to_process = st.slider("Maximum references to process", min_value=1, max_value=50, value=10, 
+                               help="Limit the number of references to process to avoid long execution times")
+    
+    if st.button("🚀 Start Reference Search"):
+        if uploaded_file is None:
+            st.error("Please upload a CSV file with references")
+        elif not api_key:
+            st.error("Google API key not found. Please add it to the .env file.")
+        else:
+            # Show progress
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            status_text.text("Processing reference CSV...")
+            
+            # Process the CSV file
+            results, error = process_reference_csv(
+                uploaded_file, 
+                api_key, 
+                search_engine_id, 
+                st.session_state.llm_model,
+                st.session_state.endpoint_url, 
+                respect_robots_txt, 
+                politeness_delay, 
+                output_path,
+                max_results_per_ref=3
+            )
+            
+            # Show results
+            if error:
+                st.error(f"Error processing references: {error}")
+            else:
+                progress_bar.progress(1.0)
+                status_text.text("🎉 Reference search completed!")
+                
+                if results:
+                    st.write(f"### 📊 Found {len(results)} matching PDFs")
+                    
+                    # Create a dataframe for better display
+                    results_df = pd.DataFrame(results)
+                    st.dataframe(results_df)
+                    
+                    # Create download button for results CSV
+                    csv = results_df.to_csv(index=False)
+                    b64 = base64.b64encode(csv.encode()).decode()
+                    href = f'<a href="data:file/csv;base64,{b64}" download="reference_matches.csv">📥 Download results as CSV</a>'
+                    st.markdown(href, unsafe_allow_html=True)
+                else:
+                    st.warning("No matching PDFs were found for the given references.")
+
+# PDF viewing section
 st.markdown("---")
 st.write("### 📄 View Saved PDFs")
 
