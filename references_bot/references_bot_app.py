@@ -10,6 +10,8 @@ import csv
 import subprocess
 import time
 import threading
+import requests
+from bs4 import BeautifulSoup
 from OllamaChatBot import OllamaChatBot
 from dotenv import load_dotenv
 
@@ -107,6 +109,63 @@ def split_references_into_chunks(references_text, chunk_size=10):
     
     return chunks
 
+def extract_title_from_doi(chatbot, doi_url):
+    """Extract the title from a DOI URL using web scraping and LLM."""
+    try:
+        # Try to fetch the DOI page
+        response = requests.get(doi_url, timeout=10)
+        if response.status_code != 200:
+            return None
+        
+        # Parse the HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Extract the HTML content
+        html_content = str(soup)
+        
+        # Use the LLM to extract the title
+        prompt = f"""
+        I have the HTML content from a DOI page ({doi_url}).
+        Please extract ONLY the title of the academic paper from this HTML.
+        Return ONLY the title text, nothing else.
+        
+        HTML content excerpt:
+        {html_content[:10000]}  # Limit the content to avoid token limits
+        """
+        
+        title = chatbot.complete(prompt).strip()
+        
+        # Clean up potential quotes from the response
+        title = title.strip('"\'')
+        
+        return title
+    except Exception as e:
+        print(f"Error extracting title from DOI: {e}")
+        return None
+
+def replace_placeholder_titles(chatbot, formatted_reference):
+    """
+    Replace placeholder titles like [Title of the article] in references 
+    with actual titles extracted from DOI links.
+    """
+    # Check if the reference contains a placeholder title and a DOI link
+    placeholder_pattern = r'\[Title of the article\]'
+    doi_pattern = r'https?://doi\.org/\S+'
+    
+    if re.search(placeholder_pattern, formatted_reference):
+        # Extract DOI URL if present
+        doi_match = re.search(doi_pattern, formatted_reference)
+        if doi_match:
+            doi_url = doi_match.group(0)
+            # Extract the title from the DOI
+            title = extract_title_from_doi(chatbot, doi_url)
+            if title:
+                # Replace the placeholder with the actual title
+                return re.sub(placeholder_pattern, title, formatted_reference)
+    
+    # Return the original reference if no replacement was made
+    return formatted_reference
+
 def reformat_references_with_llm(chatbot, references_text, filename, chunk_size, output_csv_path, log_file=None):
     """Use the OllamaChatBot to reformat references in APA style, processing in chunks and appending to CSV."""
     # Split references into manageable chunks - pass the chunk_size parameter
@@ -171,12 +230,15 @@ def reformat_references_with_llm(chatbot, references_text, filename, chunk_size,
                     # Process the references and append directly to the file
                     with open(output_csv_path, 'a', newline='', encoding='utf-8') as f:
                         for ref in result:
+                            # Check for placeholder titles and DOI links to replace
+                            formatted_ref = replace_placeholder_titles(chatbot, ref["formatted"])
+                            
                             # Add double quotes around the reference and write directly to the file
-                            formatted_ref = f'"{ref["formatted"]}"\n'
-                            f.write(formatted_ref)
+                            formatted_ref_csv = f'"{formatted_ref}"\n'
+                            f.write(formatted_ref_csv)
                             
                             # Also store in memory for the return value
-                            all_formatted_references.append({"reference": ref["formatted"]})
+                            all_formatted_references.append({"reference": formatted_ref})
                     
                     successful_chunks += 1
                     break  # Success, exit retry loop
@@ -373,7 +435,7 @@ def main():
             if st.button("Clear Status"):
                 try:
                     os.remove(status_file)
-                    st.experimental_rerun()
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error removing status file: {e}")
         
@@ -382,7 +444,7 @@ def main():
             st.warning("A background process is currently running. You can close this window and the process will continue.")
             
             if st.button("Refresh Status"):
-                st.experimental_rerun()
+                st.rerun()
                 
         # If process is complete, offer to view results
         if status == "Complete" and os.path.exists(output_csv_path):
@@ -538,7 +600,7 @@ def main():
             
             # Add a refresh button to check status
             if st.button("Check Status"):
-                st.experimental_rerun()
+                st.rerun()
 
 if __name__ == "__main__":
     main()
