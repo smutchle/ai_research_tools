@@ -145,11 +145,11 @@ def extract_title_from_doi(chatbot, doi_url):
 
 def replace_placeholder_titles(chatbot, formatted_reference):
     """
-    Replace placeholder titles like [Title of the article] in references 
+    Replace placeholder titles like Title of the article in references 
     with actual titles extracted from DOI links.
     """
     # Check if the reference contains a placeholder title and a DOI link
-    placeholder_pattern = r'\[Title of the article\]'
+    placeholder_pattern = r'Title of the article'
     doi_pattern = r'https?://doi\.org/\S+'
     
     if re.search(placeholder_pattern, formatted_reference):
