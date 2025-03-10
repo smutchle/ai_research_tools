@@ -150,6 +150,11 @@ def replace_placeholder_titles(chatbot, formatted_reference):
     """
     # Check if the reference contains a placeholder title and a DOI link
     placeholder_pattern = r'Title of the article'
+
+    # Try backup title unknown pattern
+    if not re.search(placeholder_pattern, formatted_reference):
+        placeholder_pattern = r'Title unknown'
+
     doi_pattern = r'https?://doi\.org/\S+'
     
     if re.search(placeholder_pattern, formatted_reference):
