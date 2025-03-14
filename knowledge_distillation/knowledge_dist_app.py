@@ -120,13 +120,6 @@ def main():
     load_dotenv(os.path.join(os.getcwd(), ".env"))
 
     st.title("Document Chunk Ranker")
-    
-    # Add imports for PDF generation
-    from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib import colors
-    import io
 
     # Sidebar for settings and filtering
     st.sidebar.header("Settings")
@@ -176,6 +169,14 @@ def main():
             # Text search filter in sidebar
             search_query = st.sidebar.text_input("Search titles, abstracts, or authors:")
             
+            # Add dropdown for search operator
+            search_operator = st.sidebar.selectbox(
+                "Search mode:", 
+                options=["OR", "AND"], 
+                index=0,  # Default to OR
+                help="OR: Match any keyword, AND: Match all keywords"
+            )
+            
             # Year range filter if 'year' is available (in sidebar)
             if 'year' in papers_df.columns:
                 min_year, max_year = int(papers_df['year'].min()), int(papers_df['year'].max())
@@ -187,25 +188,73 @@ def main():
             else:
                 filtered_df = papers_df
             
-            # Apply text search filter
+            # Apply text search filter with AND/OR functionality
             if search_query:
-                # Search in title, abstract, and authors if these columns exist
-                mask = pd.Series(False, index=filtered_df.index)
+                # Split search query into keywords
+                keywords = [k.strip() for k in search_query.split() if k.strip()]
                 
-                if 'title' in filtered_df.columns:
-                    mask |= filtered_df['title'].fillna('').str.contains(search_query, case=False)
-                
-                if 'abstract' in filtered_df.columns:
-                    mask |= filtered_df['abstract'].fillna('').str.contains(search_query, case=False)
-                
-                if 'authors' in filtered_df.columns:
-                    mask |= filtered_df['authors'].fillna('').str.contains(search_query, case=False)
-                
-                filtered_df = filtered_df[mask]
+                if keywords:
+                    # Search in title, abstract, and authors if these columns exist
+                    if search_operator == "OR":
+                        # Initialize mask with False for OR condition
+                        mask = pd.Series(False, index=filtered_df.index)
+                        
+                        for keyword in keywords:
+                            keyword_mask = pd.Series(False, index=filtered_df.index)
+                            
+                            if 'title' in filtered_df.columns:
+                                keyword_mask |= filtered_df['title'].fillna('').str.contains(keyword, case=False)
+                            
+                            if 'abstract' in filtered_df.columns:
+                                keyword_mask |= filtered_df['abstract'].fillna('').str.contains(keyword, case=False)
+                            
+                            if 'authors' in filtered_df.columns:
+                                keyword_mask |= filtered_df['authors'].fillna('').str.contains(keyword, case=False)
+                            
+                            # OR operation between this keyword and previous results
+                            mask |= keyword_mask
+                    else:  # "AND" operator
+                        # Initialize mask with True for AND condition
+                        mask = pd.Series(True, index=filtered_df.index)
+                        
+                        for keyword in keywords:
+                            keyword_mask = pd.Series(False, index=filtered_df.index)
+                            
+                            if 'title' in filtered_df.columns:
+                                keyword_mask |= filtered_df['title'].fillna('').str.contains(keyword, case=False)
+                            
+                            if 'abstract' in filtered_df.columns:
+                                keyword_mask |= filtered_df['abstract'].fillna('').str.contains(keyword, case=False)
+                            
+                            if 'authors' in filtered_df.columns:
+                                keyword_mask |= filtered_df['authors'].fillna('').str.contains(keyword, case=False)
+                            
+                            # AND operation between this keyword and previous results
+                            mask &= keyword_mask
+                    
+                    filtered_df = filtered_df[mask]
             
             # TAB 1: Document Selection
             with tab1:
                 st.write(f"Found {len(filtered_df)} papers matching your criteria.")
+                
+                # Add Select All and Select None buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Select All Papers"):
+                        # Clear previous selection
+                        st.session_state.selected_papers = []
+                        # Add all filtered papers to selection
+                        for _, paper in filtered_df.iterrows():
+                            st.session_state.selected_papers.append(paper.to_dict())
+                        st.success(f"Selected all {len(filtered_df)} papers!")
+                        st.rerun()
+                        
+                with col2:
+                    if st.button("Clear All Selections"):
+                        st.session_state.selected_papers = []
+                        st.success("Selection cleared!")
+                        st.rerun()
                 
                 # Create a detailed table with scrollable container
                 paper_selection_container = st.container()
@@ -256,6 +305,14 @@ def main():
                         if len(header) > 120:  # Trim if too long
                             header = header[:117] + "..."
                             
+                        # Check if this paper is already selected
+                        already_selected = any(p.get('source_filename') == paper.get('source_filename') 
+                                               for p in st.session_state.selected_papers)
+                        
+                        # Add visual indicator for selected papers
+                        if already_selected:
+                            header = f"✓ {header}"
+                            
                         with paper_list.expander(header):
                             cols = st.columns([3, 1])
                             with cols[0]:
@@ -268,27 +325,25 @@ def main():
                                     st.markdown(f"{paper['abstract']}")
                             with cols[1]:
                                 # Add a select button for each paper
-                                if st.button(f"Select", key=f"select_paper_{i}"):
-                                    # Check if already selected
-                                    already_selected = any(p.get('source_filename') == paper.get('source_filename') 
-                                                          for p in st.session_state.selected_papers)
-                                    if not already_selected:
+                                button_label = "Deselect" if already_selected else "Select"
+                                if st.button(f"{button_label}", key=f"select_paper_{i}"):
+                                    if already_selected:
+                                        # Remove paper from selection
+                                        st.session_state.selected_papers = [
+                                            p for p in st.session_state.selected_papers 
+                                            if p.get('source_filename') != paper.get('source_filename')
+                                        ]
+                                        st.success("Removed from selection!")
+                                    else:
+                                        # Add paper to selection
                                         st.session_state.selected_papers.append(paper.to_dict())
                                         st.success("Added to selection!")
-                                    else:
-                                        st.info("Already selected!")
                 
                 # Display selected papers
                 if st.session_state.selected_papers:
                     st.subheader("Selected Papers")
                     for i, paper in enumerate(st.session_state.selected_papers):
                         st.write(f"{i+1}. {paper.get('title')} ({paper.get('year')})")
-                    
-                    # Allow clearing selection
-                    if st.button("Clear Paper Selection"):
-                        st.session_state.selected_papers = []
-                        st.success("Selection cleared!")
-                        st.experimental_rerun()
             
             # TAB 2: Prompt entry
             with tab2:
@@ -409,9 +464,9 @@ def main():
                         st.session_state.selected_chunks = []
                         st.success("Cleared all selected chunks!")
                     else:
-                        # Display all selected chunks
+                        # Display all selected chunks - expanded by default
                         for i, chunk in enumerate(st.session_state.selected_chunks):
-                            with st.expander(f"Selected Chunk {i+1}: {chunk['title']}"):
+                            with st.expander(f"Selected Chunk {i+1}: {chunk['title']}", expanded=True):
                                 st.markdown("**Source:** " + chunk['source'])
                                 st.markdown("**Reference:** " + chunk['reference'])
                                 st.markdown("### Content")
@@ -420,7 +475,7 @@ def main():
                                 # Option to remove this chunk
                                 if st.button(f"Remove Chunk", key=f"remove_chunk_{i}"):
                                     st.session_state.selected_chunks.pop(i)
-                                    st.experimental_rerun()
+                                    st.rerun()
             
             # TAB 3: Chunk Selection
             with tab3:
@@ -428,8 +483,33 @@ def main():
                     st.subheader("Relevant Document Chunks")
                     st.write(f"Displaying chunks with relevance score ≥ {min_score_threshold}")
                     
+                    # Add Select All and Select None buttons for chunks
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Select All Chunks"):
+                            # Add all ranked chunks to selected chunks (if not already present)
+                            for chunk in st.session_state.ranked_chunks:
+                                if chunk not in st.session_state.selected_chunks:
+                                    st.session_state.selected_chunks.append(chunk)
+                            st.success(f"Selected all {len(st.session_state.ranked_chunks)} chunks!")
+                            st.rerun()
+                            
+                    with col2:
+                        if st.button("Clear All Selected Chunks"):
+                            st.session_state.selected_chunks = []
+                            st.success("All chunk selections cleared!")
+                            st.rerun()
+                    
+                    # Display ranked chunks - expanded by default
                     for i, chunk in enumerate(st.session_state.ranked_chunks):
-                        with st.expander(f"Chunk {i+1}: {chunk['title']} (Score: {chunk['score']}/10)"):
+                        # Check if already selected
+                        is_selected = chunk in st.session_state.selected_chunks
+                        
+                        # Add visual indicator for selected chunks
+                        title_prefix = "✓ " if is_selected else ""
+                        expander_title = f"{title_prefix}Chunk {i+1}: {chunk['title']} (Score: {chunk['score']}/10)"
+                        
+                        with st.expander(expander_title, expanded=True):
                             st.markdown("**Source:** " + chunk['source'])
                             st.markdown("**Reference:** " + chunk['reference'])
                             
@@ -437,11 +517,18 @@ def main():
                             st.markdown("### Content")
                             st.markdown(chunk['chunk'])
                             
-                            # Add a button to select this chunk
-                            if st.button(f"Select Chunk {i+1}", key=f"select_chunk_{i}"):
-                                if chunk not in st.session_state.selected_chunks:
+                            # Toggle selection button
+                            button_label = "Deselect Chunk" if is_selected else "Select Chunk"
+                            if st.button(f"{button_label} {i+1}", key=f"toggle_chunk_{i}"):
+                                if is_selected:
+                                    # Remove from selection
+                                    st.session_state.selected_chunks.remove(chunk)
+                                    st.success(f"Removed chunk {i+1} from selection!")
+                                else:
+                                    # Add to selection
                                     st.session_state.selected_chunks.append(chunk)
-                                    st.success(f"Added chunk {i+1} to selected chunks!")
+                                    st.success(f"Added chunk {i+1} to selection!")
+                                st.rerun()
                 else:
                     st.info("No chunks available yet. Please select documents and run the analysis first.")
             
@@ -452,83 +539,48 @@ def main():
                 if st.session_state.selected_chunks:
                     st.write(f"You have selected {len(st.session_state.selected_chunks)} chunks for export.")
                     
-                    # Generate PDF button
-                    if st.button("Download as PDF"):
-                        from reportlab.lib.pagesizes import letter
-                        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-                        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-                        from reportlab.lib import colors
-                        import io
+                    # JSON Export button
+                    if st.button("Download as JSON"):
+                        # Prepare the JSON data
+                        json_data = {
+                            "query": st.session_state.current_query,
+                            "chunks": st.session_state.selected_chunks,
+                            "exported_at": pd.Timestamp.now().isoformat(),
+                            "total_chunks": len(st.session_state.selected_chunks)
+                        }
                         
-                        # Create PDF content
-                        st.info("Preparing PDF for download...")
+                        # Convert to JSON string
+                        json_str = json.dumps(json_data, indent=2)
                         
-                        # Create a BytesIO buffer to save the PDF to
-                        buffer = io.BytesIO()
-                        
-                        # Create the PDF document
-                        doc = SimpleDocTemplate(buffer, pagesize=letter, 
-                                             title="Selected Document Chunks")
-                        styles = getSampleStyleSheet()
-                        
-                        # Add custom styles - use unique names to avoid conflicts
-                        styles.add(ParagraphStyle(name='ChunkTitle', 
-                                               parent=styles['Heading1'],
-                                               fontSize=16,
-                                               spaceAfter=12))
-                        styles.add(ParagraphStyle(name='ChunkSource', 
-                                               parent=styles['Normal'],
-                                               fontSize=10, 
-                                               textColor=colors.gray))
-                        styles.add(ParagraphStyle(name='ChunkContent', 
-                                               parent=styles['Normal'],
-                                               fontSize=11,
-                                               leading=14,
-                                               spaceAfter=12))
-                        
-                        # Create PDF content
-                        elements = []
-                        elements.append(Paragraph("Selected Document Chunks", styles['Heading1']))
-                        elements.append(Spacer(1, 12))
-                        
-                        # Add each chunk to the PDF
-                        for i, chunk in enumerate(st.session_state.selected_chunks):
-                            # Add chunk title
-                            chunk_title = f"Chunk {i+1}: {chunk['title']}"
-                            elements.append(Paragraph(chunk_title, styles['Heading2']))
-                            
-                            # Add source and reference
-                            source_text = f"Source: {chunk['source']}"
-                            reference_text = f"Reference: {chunk['reference']}"
-                            elements.append(Paragraph(source_text, styles['ChunkSource']))
-                            elements.append(Paragraph(reference_text, styles['ChunkSource']))
-                            elements.append(Spacer(1, 6))
-                            
-                            # Add chunk content - sanitize HTML tags that cause issues with ReportLab
-                            content_text = chunk['chunk']
-                            # Fix common HTML issues that cause problems with ReportLab
-                            if content_text:
-                                # Replace <br> tags with newlines
-                                content_text = content_text.replace('<br>', '\n')
-                                content_text = content_text.replace('<br/>', '\n')
-                                content_text = content_text.replace('<br />', '\n')
-                            elements.append(Paragraph(content_text, styles['ChunkContent']))
-                            elements.append(Spacer(1, 12))
-                        
-                        # Build the PDF
-                        doc.build(elements)
-                        
-                        # Get the value of the buffer
-                        pdf_bytes = buffer.getvalue()
-                        buffer.close()
-                        
-                        # Provide the PDF for download
+                        # Provide the JSON for download
                         st.download_button(
-                            label="Download PDF",
-                            data=pdf_bytes,
-                            file_name="selected_chunks.pdf",
-                            mime="application/pdf"
+                            label="Download JSON File",
+                            data=json_str,
+                            file_name="selected_chunks.json",
+                            mime="application/json"
                         )
+                        
+                        st.success("JSON file ready for download!")
+                        
+                    # Display a preview of the JSON data
+                    with st.expander("JSON Data Preview", expanded=True):
+                        # Create a simplified preview of the data
+                        preview_data = []
+                        for i, chunk in enumerate(st.session_state.selected_chunks):
+                            # Create a simplified version for preview
+                            preview_chunk = {
+                                "title": chunk['title'],
+                                "source": chunk['source'],
+                                "reference": chunk['reference'],
+                                "chunk_number": chunk.get('chunk_number', i+1),
+                                "score": chunk.get('score', 'N/A'),
+                                # Show just the first 200 chars of chunk content
+                                "chunk_preview": chunk['chunk'][:200] + "..." if len(chunk['chunk']) > 200 else chunk['chunk']
+                            }
+                            preview_data.append(preview_chunk)
+                        
+                        # Display the preview as JSON
+                        st.json(preview_data)
                 else:
                     st.info("No chunks have been selected. Please select chunks from the 'Chunk Selection' tab first.")
     else:
