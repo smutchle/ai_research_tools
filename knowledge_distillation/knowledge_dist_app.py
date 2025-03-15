@@ -8,6 +8,128 @@ from LLMReranker import LLMReranker
 from OllamaChatBot import OllamaChatBot
 from dotenv import load_dotenv
 
+def generate_metadata(folder_path: str, ollama_bot: OllamaChatBot) -> None:
+    """
+    Generate metadata files for documents in the specified folder.
+    
+    Args:
+        folder_path: Path to the folder containing documents
+        ollama_bot: Instance of OllamaChatBot for LLM processing
+    
+    Returns:
+        None
+    """
+    # Create metadata folder if it doesn't exist
+    metadata_folder = os.path.join(folder_path, "metadata")
+    os.makedirs(metadata_folder, exist_ok=True)
+    
+    # Get all PDF and Markdown files in the folder
+    pdf_files = glob.glob(os.path.join(folder_path, "*.pdf"))
+    md_files = glob.glob(os.path.join(folder_path, "*.md"))
+    all_files = pdf_files + md_files
+    
+    if not all_files:
+        st.error(f"No PDF or Markdown files found in {folder_path}")
+        return
+    
+    # Create progress indicators
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # Process each file
+    for i, file_path in enumerate(all_files):
+        filename = os.path.basename(file_path)
+        metadata_path = os.path.join(metadata_folder, f"{filename}.json")
+        
+        # Skip if metadata already exists
+        if os.path.exists(metadata_path) and not st.session_state.get('overwrite_metadata', False):
+            status_text.text(f"Skipping {filename} (metadata already exists)")
+            progress_bar.progress((i + 1) / len(all_files))
+            continue
+        
+        status_text.text(f"Processing {i+1}/{len(all_files)}: {filename}")
+        
+        try:
+            # Read document content
+            content = read_document_content(file_path)
+            
+            # Extract first 2000 characters for metadata generation
+            content_preview = content[:2000]
+            
+            # Create prompt for metadata extraction
+            prompt = f"""
+            Extract metadata from the following document preview. Return ONLY a JSON object with these fields:
+            - title: The document title
+            - authors: Author names (comma separated)
+            - year: Publication year (numeric)
+            - journal: Journal or conference name
+            - abstract: Document abstract or summary
+            
+            If any field cannot be determined, use Unknown for text fields and 1900 for year.
+            
+            Document preview:
+            {content_preview}
+            """
+            
+            # Get metadata from LLM
+            llm_response = ollama_bot.completeAsJSON(prompt)
+            
+            # Parse the response and create a properly formatted dictionary
+            try:
+                llm_result = json.loads(llm_response)
+                metadata_json = {
+                    "title": llm_result.get("title", "Unknown"),
+                    "authors": llm_result.get("authors", "Unknown"),
+                    "year": llm_result.get("year", 1900),
+                    "journal": llm_result.get("journal", "Unknown"),
+                    "abstract": llm_result.get("abstract", "Unknown")
+                }
+                
+                # Ensure year is properly formatted as an integer
+                try:
+                    metadata_json["year"] = int(metadata_json["year"])
+                except (ValueError, TypeError):
+                    metadata_json["year"] = 1900
+            except json.JSONDecodeError:
+                # Handle cases where the LLM doesn't return valid JSON
+                metadata_json = {
+                    "title": filename,
+                    "authors": "Unknown",
+                    "year": 1900,
+                    "journal": "Unknown",
+                    "abstract": "Unknown",
+                    "error": "Failed to parse LLM response"
+                }
+            
+            # Save metadata to file
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata_json, f, indent=2, ensure_ascii=False)
+                
+            status_text.text(f"Completed {filename}")
+            
+        except Exception as e:
+            st.error(f"Error processing {filename}: {str(e)}")
+            # Save error information with proper format
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "title": filename,
+                    "authors": "Unknown",
+                    "year": 1900,
+                    "journal": "Unknown",
+                    "abstract": "Unknown",
+                    "error": str(e)
+                }, f, indent=2, ensure_ascii=False)
+        
+        # Update progress
+        progress_bar.progress((i + 1) / len(all_files))
+    
+    # Clear progress indicators
+    progress_bar.empty()
+    status_text.text(f"Metadata generation complete! Processed {len(all_files)} files.")
+    
+    # Return success message
+    return f"Generated metadata for {len(all_files)} files in {folder_path}"
+
 def load_metadata_files(folder_path: str) -> List[Dict[str, Any]]:
     """
     Load all metadata JSON files from the metadata folder.
@@ -119,17 +241,49 @@ def get_document_chunk_data(file_path: str, chunk_size: int, chunk_overlap: int,
 def main():
     load_dotenv(os.path.join(os.getcwd(), ".env"))
 
-    st.title("Document Chunk Ranker")
+    # Use environment variables directly
+    ollama_model = os.getenv("OLLAMA_MODEL")
+    ollama_endpoint = os.getenv("OLLAMA_END_POINT")
+    temperature = 0.1  # Default temperature
+
+    st.title("Human-in-the-loop Document Distillation for LLMs")
 
     # Sidebar for settings and filtering
     st.sidebar.header("Settings")
     folder_path = st.sidebar.text_input("Enter folder path containing documents:", os.getenv("SOURCE_DOC_DIR"))
-    
-    # Use environment variables directly
-    ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
-    ollama_endpoint = os.getenv("OLLAMA_END_POINT", "http://localhost:11434")
-    temperature = 0.1  # Default temperature
-    
+     
+    st.sidebar.subheader("Document Processing")
+    with st.sidebar.expander("Metadata Generator", expanded=False):
+        st.write("Generate metadata for documents in the folder")
+        
+        # Option to overwrite existing metadata
+        overwrite = st.checkbox("Overwrite existing metadata", 
+                            value=False, 
+                            help="If checked, will regenerate metadata even if it already exists")
+        
+        # Store in session state
+        if "overwrite_metadata" not in st.session_state:
+            st.session_state.overwrite_metadata = overwrite
+        else:
+            st.session_state.overwrite_metadata = overwrite
+        
+        # Generate metadata button
+        if st.button("Generate Metadata"):
+            if folder_path and os.path.isdir(folder_path):
+                # Initialize Ollama chatbot for metadata generation
+                metadata_bot = OllamaChatBot(
+                    model=ollama_model,
+                    end_point_url=ollama_endpoint,
+                    temperature=0.1,  # Lower temperature for more deterministic output
+                    keep_history=False
+                )
+                
+                # Run metadata generation
+                result = generate_metadata(folder_path, metadata_bot)
+                st.success(result)
+            else:
+                st.error("Please enter a valid folder path.")
+
     # Simple settings that users might want to adjust
     chunk_size = 2000  # Default chunk size
     chunk_overlap = 200  # Default chunk overlap
