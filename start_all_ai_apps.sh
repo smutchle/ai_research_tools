@@ -12,4 +12,7 @@ cd $AI_BASE_DIR/research_rag_bot
 cd $AI_BASE_DIR/web_researcher_bot
 ./run_researcher_in_background.sh
 
+cd $AI_BASE_DIR/knowledge_distillation
+./run_kd_in_background.sh
+
 cd $CURRENT_DIR
