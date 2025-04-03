@@ -13,6 +13,6 @@ cd $AI_BASE_DIR/web_researcher_bot
 ./run_researcher_in_background.sh
 
 cd $AI_BASE_DIR/knowledge_distillation
-./run_kd_in_background.sh
+./run_kd_app_in_background.sh
 
 cd $CURRENT_DIR

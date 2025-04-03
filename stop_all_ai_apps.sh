@@ -5,6 +5,7 @@ targets=(
   "web_researcher_app.py"
   "references_bot_app.py"
   "research_rag_bot_app.py"
+  "knowledge_dist_app.py"
 )
 
 echo "Searching for processes to terminate..."
