@@ -4,58 +4,58 @@ import json
 import glob
 from typing import List, Dict, Any
 import pandas as pd
-from LLMReranker import LLMReranker
+from LLMReranker import LLMReranker  # Ensure this class exists and is correctly implemented
 from OllamaChatBot import OllamaChatBot
 from dotenv import load_dotenv
 
 def generate_metadata(folder_path: str, ollama_bot: OllamaChatBot) -> None:
     """
     Generate metadata files for documents in the specified folder.
-    
+
     Args:
         folder_path: Path to the folder containing documents
         ollama_bot: Instance of OllamaChatBot for LLM processing
-    
+
     Returns:
         None
     """
     # Create metadata folder if it doesn't exist
     metadata_folder = os.path.join(folder_path, "metadata")
     os.makedirs(metadata_folder, exist_ok=True)
-    
+
     # Get all PDF and Markdown files in the folder
     pdf_files = glob.glob(os.path.join(folder_path, "*.pdf"))
     md_files = glob.glob(os.path.join(folder_path, "*.md"))
     all_files = pdf_files + md_files
-    
+
     if not all_files:
         st.error(f"No PDF or Markdown files found in {folder_path}")
         return
-    
+
     # Create progress indicators
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     # Process each file
     for i, file_path in enumerate(all_files):
         filename = os.path.basename(file_path)
         metadata_path = os.path.join(metadata_folder, f"{filename}.json")
-        
+
         # Skip if metadata already exists
         if os.path.exists(metadata_path) and not st.session_state.get('overwrite_metadata', False):
             status_text.text(f"Skipping {filename} (metadata already exists)")
             progress_bar.progress((i + 1) / len(all_files))
             continue
-        
-        status_text.text(f"Processing {i+1}/{len(all_files)}: {filename}")
-        
+
+        status_text.text(f"Processing {i + 1}/{len(all_files)}: {filename}")
+
         try:
             # Read document content
             content = read_document_content(file_path)
-            
+
             # Extract first 2000 characters for metadata generation
             content_preview = content[:2000]
-            
+
             # Create prompt for metadata extraction
             prompt = f"""
             Extract metadata from the following document preview. Return ONLY a JSON object with these fields:
@@ -64,16 +64,16 @@ def generate_metadata(folder_path: str, ollama_bot: OllamaChatBot) -> None:
             - year: Publication year (numeric)
             - journal: Journal or conference name
             - abstract: Document abstract or summary
-            
+
             If any field cannot be determined, use Unknown for text fields and 1900 for year.
-            
+
             Document preview:
             {content_preview}
             """
-            
+
             # Get metadata from LLM
             llm_response = ollama_bot.completeAsJSON(prompt)
-            
+
             # Parse the response and create a properly formatted dictionary
             try:
                 llm_result = json.loads(llm_response)
@@ -84,7 +84,7 @@ def generate_metadata(folder_path: str, ollama_bot: OllamaChatBot) -> None:
                     "journal": llm_result.get("journal", "Unknown"),
                     "abstract": llm_result.get("abstract", "Unknown")
                 }
-                
+
                 # Ensure year is properly formatted as an integer
                 try:
                     metadata_json["year"] = int(metadata_json["year"])
@@ -100,13 +100,13 @@ def generate_metadata(folder_path: str, ollama_bot: OllamaChatBot) -> None:
                     "abstract": "Unknown",
                     "error": "Failed to parse LLM response"
                 }
-            
+
             # Save metadata to file
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata_json, f, indent=2, ensure_ascii=False)
-                
+
             status_text.text(f"Completed {filename}")
-            
+
         except Exception as e:
             st.error(f"Error processing {filename}: {str(e)}")
             # Save error information with proper format
@@ -119,58 +119,58 @@ def generate_metadata(folder_path: str, ollama_bot: OllamaChatBot) -> None:
                     "abstract": "Unknown",
                     "error": str(e)
                 }, f, indent=2, ensure_ascii=False)
-        
+
         # Update progress
         progress_bar.progress((i + 1) / len(all_files))
-    
+
     # Clear progress indicators
     progress_bar.empty()
     status_text.text(f"Metadata generation complete! Processed {len(all_files)} files.")
-    
+
     # Return success message
     return f"Generated metadata for {len(all_files)} files in {folder_path}"
 
 def load_metadata_files(folder_path: str) -> List[Dict[str, Any]]:
     """
     Load all metadata JSON files from the metadata folder.
-    
+
     Args:
         folder_path: Path to the folder containing the metadata subfolder
-        
+
     Returns:
         List of dictionaries containing metadata
     """
     metadata_folder = os.path.join(folder_path, "metadata")
     metadata_files = glob.glob(os.path.join(metadata_folder, "*.json"))
-    
+
     metadata_list = []
     for file_path in metadata_files:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
-                
+
                 # Skip files with errors
                 if "error" in metadata:
                     continue
-                    
+
                 # Add source document filename
                 source_filename = os.path.basename(file_path).replace(".json", "")
                 metadata["source_filename"] = source_filename
                 metadata["full_path"] = os.path.join(folder_path, source_filename)
-                
+
                 metadata_list.append(metadata)
         except Exception as e:
             st.error(f"Error loading {file_path}: {str(e)}")
-    
+
     return metadata_list
 
 def read_document_content(file_path: str) -> str:
     """
     Read the content of a document file (PDF or Markdown).
-    
+
     Args:
         file_path: Path to the document file
-        
+
     Returns:
         String containing the document content
     """
@@ -195,47 +195,60 @@ def read_document_content(file_path: str) -> str:
     except Exception as e:
         return f"Error reading file: {str(e)}"
 
-def get_document_chunk_data(file_path: str, chunk_size: int, chunk_overlap: int, 
+def get_document_chunk_data(file_path: str, chunk_size: int, chunk_overlap: int,
                            reranker: LLMReranker, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Read a document, chunk it, and prepare the data for ranking.
-    
+
     Args:
         file_path: Path to the document file
         chunk_size: Size of chunks in characters
         chunk_overlap: Overlap between chunks in characters
         reranker: LLMReranker instance for chunking
         metadata: Document metadata
-        
+
     Returns:
         List of dictionaries with chunk data
     """
     # Read document content
     content = read_document_content(file_path)
-    
+
     # Chunk content based on file type
     if file_path.lower().endswith('.pdf'):
-        chunks = reranker.chunk_pdf_text(content, chunk_size, chunk_overlap)
+        chunks = reranker.chunk_pdf_text(content, chunk_size, chunk_overlap)  # Use chunk_size and overlap
     elif file_path.lower().endswith('.md'):
-        chunks = reranker.chunk_markdown(content)
+        #Currently the chunk_markdown function does not take chunk_size or chunk_overlap
+        #chunks = reranker.chunk_markdown(content, chunk_size, chunk_overlap)  #Modify reranker if you want to use chunksize for markdown
+        chunks = reranker.chunk_markdown(content, chunk_size) #Leave it like this if chunk size and overlap should only be applied for pdfs
     else:
         chunks = [content]  # Just one chunk for unsupported files
-    
+
     # Create chunk data dictionaries
+    # Construct a more informative reference string
+    title = metadata.get("title", "Unknown Title")
+    authors = metadata.get("authors", "Unknown Authors")
+    year = metadata.get("year", "Unknown Year")
+    journal = metadata.get("journal", "Unknown Journal")
+    source_filename = os.path.basename(file_path) #keep the filename if all other attempts fail.
+
+    reference = f"{title} ({year}), {authors}, {journal}" #Customize this string for your desired reference format
+    #If the refrence gets to long, it should fallback to the filename
+    if len(reference) > 250:
+        reference = source_filename
     chunk_data = []
-    reference = metadata.get("reference", f"Source: {os.path.basename(file_path)}")
-    
+
+
     for i, chunk_text in enumerate(chunks, 1):
         chunk_data.append({
             "chunk": chunk_text,
             "source": os.path.basename(file_path),
             "chunk_number": i,
-            "reference": reference,
+            "reference": reference,  # Use the constructed reference
             "title": metadata.get("title", "Unknown Title"),
             "authors": metadata.get("authors", "Unknown Authors"),
             "year": metadata.get("year", "Unknown Year")
         })
-    
+
     return chunk_data
 
 def main():
@@ -251,22 +264,22 @@ def main():
     # Sidebar for settings and filtering
     st.sidebar.header("Settings")
     folder_path = st.sidebar.text_input("Enter folder path containing documents:", os.getenv("SOURCE_DOC_DIR"))
-     
+
     st.sidebar.subheader("Document Processing")
     with st.sidebar.expander("Metadata Generator", expanded=False):
         st.write("Generate metadata for documents in the folder")
-        
+
         # Option to overwrite existing metadata
-        overwrite = st.checkbox("Overwrite existing metadata", 
-                            value=False, 
+        overwrite = st.checkbox("Overwrite existing metadata",
+                            value=False,
                             help="If checked, will regenerate metadata even if it already exists")
-        
+
         # Store in session state
         if "overwrite_metadata" not in st.session_state:
             st.session_state.overwrite_metadata = overwrite
         else:
             st.session_state.overwrite_metadata = overwrite
-        
+
         # Generate metadata button
         if st.button("Generate Metadata"):
             if folder_path and os.path.isdir(folder_path):
@@ -277,7 +290,7 @@ def main():
                     temperature=0.1,  # Lower temperature for more deterministic output
                     keep_history=False
                 )
-                
+
                 # Run metadata generation
                 result = generate_metadata(folder_path, metadata_bot)
                 st.success(result)
@@ -285,113 +298,115 @@ def main():
                 st.error("Please enter a valid folder path.")
 
     # Simple settings that users might want to adjust
-    chunk_size = 2000  # Default chunk size
+    default_chunk_size = 2000
+    chunk_size = st.sidebar.slider("Chunk Size (characters)", min_value=500, max_value=20000, value=default_chunk_size, step=500,
+                                     help="Size of text chunks to process.  Larger chunks may be faster but less precise.")
     chunk_overlap = 200  # Default chunk overlap
-    min_score_threshold = st.sidebar.slider("Min Ranking", min_value=1, max_value=10, value=6, 
+    min_score_threshold = st.sidebar.slider("Min Ranking", min_value=1, max_value=10, value=6,
                                          help="Only show chunks with this ranking or higher")
-    
+
     # Initialize session state for selected papers
     if "selected_papers" not in st.session_state:
         st.session_state.selected_papers = []
-    
+
     if "ranked_chunks" not in st.session_state:
         st.session_state.ranked_chunks = []
-    
+
     if "selected_chunks" not in st.session_state:
         st.session_state.selected_chunks = []
-        
+
     if "current_query" not in st.session_state:
         st.session_state.current_query = "What are the key findings and methodologies in these papers?"
-    
+
     # Main workflow
     if folder_path and os.path.isdir(folder_path):
         # Step 1: Load and filter papers
         papers = load_metadata_files(folder_path)
-        
+
         if not papers:
             st.warning("No metadata files found. Please run the Document Metadata Generator first.")
         else:
             # Convert to DataFrame for easy filtering
             papers_df = pd.DataFrame(papers)
-            
+
             # Create tabs for document selection, prompt, chunk selection, and output
             tab1, tab2, tab3, tab4 = st.tabs(["Document Selection", "Prompt", "Chunk Selection", "Output"])
-            
+
             # Display paper filtering options in sidebar
             st.sidebar.subheader("Filter Papers")
-            
+
             # Text search filter in sidebar
-            search_query = st.sidebar.text_input("Search titles, abstracts, or authors:")
-            
+            search_query = st.sidebar.text_input("Search titles, abstracts, or authors (comma separated terms):")
+
             # Add dropdown for search operator
             search_operator = st.sidebar.selectbox(
-                "Search mode:", 
-                options=["OR", "AND"], 
+                "Search mode:",
+                options=["OR", "AND"],
                 index=0,  # Default to OR
                 help="OR: Match any keyword, AND: Match all keywords"
             )
-            
+
             # Year range filter if 'year' is available (in sidebar)
             if 'year' in papers_df.columns:
                 min_year, max_year = int(papers_df['year'].min()), int(papers_df['year'].max())
                 year_range = st.sidebar.slider("Year Range", min_year, max_year, (min_year, max_year))
-                
+
                 # Apply year filter
-                filtered_df = papers_df[(papers_df['year'] >= year_range[0]) & 
+                filtered_df = papers_df[(papers_df['year'] >= year_range[0]) &
                                        (papers_df['year'] <= year_range[1])]
             else:
                 filtered_df = papers_df
-            
+
             # Apply text search filter with AND/OR functionality
             if search_query:
                 # Split search query into keywords
-                keywords = [k.strip() for k in search_query.split() if k.strip()]
-                
+                keywords = [k.strip() for k in search_query.split(',') if k.strip()] # Split by comma for CSV
+
                 if keywords:
                     # Search in title, abstract, and authors if these columns exist
                     if search_operator == "OR":
                         # Initialize mask with False for OR condition
                         mask = pd.Series(False, index=filtered_df.index)
-                        
+
                         for keyword in keywords:
                             keyword_mask = pd.Series(False, index=filtered_df.index)
-                            
+
                             if 'title' in filtered_df.columns:
-                                keyword_mask |= filtered_df['title'].fillna('').str.contains(keyword, case=False)
-                            
+                                keyword_mask |= filtered_df['title'].fillna('').str.contains(keyword, case=False, regex=False)
+
                             if 'abstract' in filtered_df.columns:
-                                keyword_mask |= filtered_df['abstract'].fillna('').str.contains(keyword, case=False)
-                            
+                                keyword_mask |= filtered_df['abstract'].fillna('').str.contains(keyword, case=False, regex=False)
+
                             if 'authors' in filtered_df.columns:
-                                keyword_mask |= filtered_df['authors'].fillna('').str.contains(keyword, case=False)
-                            
+                                keyword_mask |= filtered_df['authors'].fillna('').str.contains(keyword, case=False, regex=False)
+
                             # OR operation between this keyword and previous results
                             mask |= keyword_mask
                     else:  # "AND" operator
                         # Initialize mask with True for AND condition
                         mask = pd.Series(True, index=filtered_df.index)
-                        
+
                         for keyword in keywords:
                             keyword_mask = pd.Series(False, index=filtered_df.index)
-                            
+
                             if 'title' in filtered_df.columns:
-                                keyword_mask |= filtered_df['title'].fillna('').str.contains(keyword, case=False)
-                            
+                                keyword_mask |= filtered_df['title'].fillna('').str.contains(keyword, case=False, regex=False)
+
                             if 'abstract' in filtered_df.columns:
-                                keyword_mask |= filtered_df['abstract'].fillna('').str.contains(keyword, case=False)
-                            
+                                keyword_mask |= filtered_df['abstract'].fillna('').str.contains(keyword, case=False, regex=False)
+
                             if 'authors' in filtered_df.columns:
-                                keyword_mask |= filtered_df['authors'].fillna('').str.contains(keyword, case=False)
-                            
+                                keyword_mask |= filtered_df['authors'].fillna('').str.contains(keyword, case=False, regex=False)
+
                             # AND operation between this keyword and previous results
                             mask &= keyword_mask
-                    
+
                     filtered_df = filtered_df[mask]
-            
+
             # TAB 1: Document Selection
             with tab1:
                 st.write(f"Found {len(filtered_df)} papers matching your criteria.")
-                
+
                 # Add Select All and Select None buttons
                 col1, col2 = st.columns(2)
                 with col1:
@@ -403,23 +418,23 @@ def main():
                             st.session_state.selected_papers.append(paper.to_dict())
                         st.success(f"Selected all {len(filtered_df)} papers!")
                         st.rerun()
-                        
+
                 with col2:
                     if st.button("Clear All Selections"):
                         st.session_state.selected_papers = []
                         st.success("Selection cleared!")
                         st.rerun()
-                
+
                 # Create a detailed table with scrollable container
                 paper_selection_container = st.container()
-                
+
                 with paper_selection_container:
                     # Create a scrollable list with detailed information
                     st.subheader("Available Papers")
-                    
+
                     # Create a selection container with a scrollable height
                     paper_list = st.container()
-                    
+
                     # Display the papers in an expandable format
                     for i, (_, paper) in enumerate(filtered_df.iterrows()):
                         # With this code:
@@ -445,10 +460,10 @@ def main():
                         # Trim authors if too long
                         if len(authors) > 40:
                             authors = authors[:37] + "..."
-                        
+
                         # Ensure title is a string
                         title = str(paper.get('title', 'Unknown Title'))
-                        
+
                         # Handle journal - ensure it's a string
                         journal = paper.get('journal', 'Unknown')
                         if journal is None or not isinstance(journal, str):
@@ -458,15 +473,15 @@ def main():
                         header = f"{year} - {authors} - {title} - {journal}"
                         if len(header) > 120:  # Trim if too long
                             header = header[:117] + "..."
-                            
+
                         # Check if this paper is already selected
-                        already_selected = any(p.get('source_filename') == paper.get('source_filename') 
+                        already_selected = any(p.get('source_filename') == paper.get('source_filename')
                                                for p in st.session_state.selected_papers)
-                        
+
                         # Add visual indicator for selected papers
                         if already_selected:
                             header = f"✓ {header}"
-                            
+
                         with paper_list.expander(header):
                             cols = st.columns([3, 1])
                             with cols[0]:
@@ -484,7 +499,7 @@ def main():
                                     if already_selected:
                                         # Remove paper from selection
                                         st.session_state.selected_papers = [
-                                            p for p in st.session_state.selected_papers 
+                                            p for p in st.session_state.selected_papers
                                             if p.get('source_filename') != paper.get('source_filename')
                                         ]
                                         st.success("Removed from selection!")
@@ -492,25 +507,25 @@ def main():
                                         # Add paper to selection
                                         st.session_state.selected_papers.append(paper.to_dict())
                                         st.success("Added to selection!")
-                
+
                 # Display selected papers
                 if st.session_state.selected_papers:
                     st.subheader("Selected Papers")
                     for i, paper in enumerate(st.session_state.selected_papers):
-                        st.write(f"{i+1}. {paper.get('title')} ({paper.get('year')})")
-            
+                        st.write(f"{i + 1}. {paper.get('title')} ({paper.get('year')})")
+
             # TAB 2: Prompt entry
             with tab2:
                 st.subheader("Research Question/Prompt")
-                
+
                 if not st.session_state.selected_papers:
                     st.warning("Please select papers in the 'Document Selection' tab first.")
                 else:
                     st.write("Enter your research question or topic to find relevant chunks in the selected papers:")
-                    query = st.text_area("", 
-                                       st.session_state.current_query, 
+                    query = st.text_area("",
+                                       st.session_state.current_query,
                                        height=150)
-                    
+
                     # Display the selected papers for reference
                     st.subheader("Selected Papers")
                     for i, paper in enumerate(st.session_state.selected_papers):
@@ -526,7 +541,7 @@ def main():
                             year = 'n/a'
                         else:
                             year = str(year_value)
-                            
+
                         # Handle authors - ensure it's a string
                         authors = paper.get('authors', 'Unknown')
                         if authors is None or not isinstance(authors, str):
@@ -534,29 +549,29 @@ def main():
                         # Trim authors if too long
                         if len(authors) > 40:
                             authors = authors[:37] + "..."
-                        
+
                         # Ensure title is a string
                         title = str(paper.get('title', 'Unknown Title'))
-                        
+
                         # Handle journal - ensure it's a string
                         journal = paper.get('journal', 'Unknown')
                         if journal is None or not isinstance(journal, str):
                             journal = "Unknown"
                         elif isinstance(journal, str) and len(journal) > 30:
                             journal = journal[:27] + "..."
-                            
+
                         # Create the formatted header
-                        header = f"{i+1}. {year} - {authors} - {title} - {journal}"
+                        header = f"{i + 1}. {year} - {authors} - {title} - {journal}"
                         if len(header) > 120:  # Trim if too long
                             header = header[:117] + "..."
-                            
+
                         st.write(header)
-                        
+
                     # Analyze button in the prompt tab
                     if st.button("Analyze Selected Papers", type="primary"):
                         # Store the query in session state to access it later
                         st.session_state.current_query = query
-                        
+
                         # Initialize Ollama chatbot
                         bot = OllamaChatBot(
                             model=ollama_model,
@@ -564,79 +579,79 @@ def main():
                             temperature=temperature,
                             keep_history=False
                         )
-                        
+
                         # Initialize reranker
                         reranker = LLMReranker(bot)
-                        
+
                         # Collect chunks from all selected papers
                         all_chunks = []
-                        
+
                         progress_bar = st.progress(0)
                         status_text = st.empty()
-                        
+
                         for i, paper in enumerate(st.session_state.selected_papers):
-                            status_text.text(f"Processing {i+1}/{len(st.session_state.selected_papers)}: {paper.get('title')}")
-                            
+                            status_text.text(f"Processing {i + 1}/{len(st.session_state.selected_papers)}: {paper.get('title')}")
+
                             file_path = paper.get('full_path')
                             if file_path and os.path.exists(file_path):
                                 paper_chunks = get_document_chunk_data(
                                     file_path, chunk_size, chunk_overlap, reranker, paper
                                 )
                                 all_chunks.extend(paper_chunks)
-                            
+
                             progress_bar.progress((i + 1) / len(st.session_state.selected_papers))
-                        
+
                         status_text.text(f"Ranking {len(all_chunks)} chunks against your query...")
-                        
+
                         # Rank chunks
                         ranked_chunks = reranker.rank_chunks(
-                            query, 
+                            query,
                             all_chunks,
                             progress_callback=lambda p: progress_bar.progress(p)
                         )
-                        
+
                         # Filter by threshold
                         filtered_chunks = reranker.filter_chunks_by_score(ranked_chunks, min_score_threshold)
-                        
+
                         # No limit on chunks - only filter by threshold score
-                        
+
                         # Store in session state
                         st.session_state.ranked_chunks = filtered_chunks
-                        
+
                         # Clear progress indicators
                         progress_bar.empty()
                         status_text.empty()
-                        
+
                         st.success(f"Analysis complete! Found {len(filtered_chunks)} relevant chunks.")
-                        
+
                 # Display selected chunks in the prompt tab as well
                 if st.session_state.selected_chunks:
                     st.subheader("Selected Chunks")
                     st.write(f"You have selected {len(st.session_state.selected_chunks)} chunks.")
-                    
+
                     if st.button("Clear Selected Chunks"):
                         st.session_state.selected_chunks = []
                         st.success("Cleared all selected chunks!")
                     else:
                         # Display all selected chunks - expanded by default
                         for i, chunk in enumerate(st.session_state.selected_chunks):
-                            with st.expander(f"Selected Chunk {i+1}: {chunk['title']}", expanded=True):
+                            with st.expander(f"Selected Chunk {i + 1}: {chunk['title']}", expanded=True):
                                 st.markdown("**Source:** " + chunk['source'])
                                 st.markdown("**Reference:** " + chunk['reference'])
                                 st.markdown("### Content")
                                 st.markdown(chunk['chunk'])
-                                
+
                                 # Option to remove this chunk
                                 if st.button(f"Remove Chunk", key=f"remove_chunk_{i}"):
                                     st.session_state.selected_chunks.pop(i)
                                     st.rerun()
-            
+
             # TAB 3: Chunk Selection
             with tab3:
                 if st.session_state.ranked_chunks:
                     st.subheader("Relevant Document Chunks")
                     st.write(f"Displaying chunks with relevance score ≥ {min_score_threshold}")
-                    
+
                     # Add Select All and Select None buttons for chunks
                     col1, col2 = st.columns(2)
                     with col1:
@@ -647,52 +662,52 @@ def main():
                                     st.session_state.selected_chunks.append(chunk)
                             st.success(f"Selected all {len(st.session_state.ranked_chunks)} chunks!")
                             st.rerun()
-                            
+
                     with col2:
                         if st.button("Clear All Selected Chunks"):
                             st.session_state.selected_chunks = []
                             st.success("All chunk selections cleared!")
                             st.rerun()
-                    
+
                     # Display ranked chunks - expanded by default
                     for i, chunk in enumerate(st.session_state.ranked_chunks):
                         # Check if already selected
                         is_selected = chunk in st.session_state.selected_chunks
-                        
+
                         # Add visual indicator for selected chunks
                         title_prefix = "✓ " if is_selected else ""
-                        expander_title = f"{title_prefix}Chunk {i+1}: {chunk['title']} (Score: {chunk['score']}/10)"
-                        
+                        expander_title = f"{title_prefix}Chunk {i + 1}: {chunk['title']} (Score: {chunk['score']}/10)"
+
                         with st.expander(expander_title, expanded=True):
                             st.markdown("**Source:** " + chunk['source'])
                             st.markdown("**Reference:** " + chunk['reference'])
-                            
+
                             # Display the chunk text
                             st.markdown("### Content")
                             st.markdown(chunk['chunk'])
-                            
+
                             # Toggle selection button
                             button_label = "Deselect Chunk" if is_selected else "Select Chunk"
-                            if st.button(f"{button_label} {i+1}", key=f"toggle_chunk_{i}"):
+                            if st.button(f"{button_label} {i + 1}", key=f"toggle_chunk_{i}"):
                                 if is_selected:
                                     # Remove from selection
                                     st.session_state.selected_chunks.remove(chunk)
-                                    st.success(f"Removed chunk {i+1} from selection!")
+                                    st.success(f"Removed chunk {i + 1} from selection!")
                                 else:
                                     # Add to selection
                                     st.session_state.selected_chunks.append(chunk)
-                                    st.success(f"Added chunk {i+1} to selection!")
+                                    st.success(f"Added chunk {i + 1} to selection!")
                                 st.rerun()
                 else:
                     st.info("No chunks available yet. Please select documents and run the analysis first.")
-            
+
             # TAB 4: Output
             with tab4:
                 st.subheader("Export Selected Chunks")
-                
+
                 if st.session_state.selected_chunks:
                     st.write(f"You have selected {len(st.session_state.selected_chunks)} chunks for export.")
-                    
+
                     # JSON Export button
                     if st.button("Download as JSON"):
                         # Prepare the JSON data
@@ -702,10 +717,10 @@ def main():
                             "exported_at": pd.Timestamp.now().isoformat(),
                             "total_chunks": len(st.session_state.selected_chunks)
                         }
-                        
+
                         # Convert to JSON string
                         json_str = json.dumps(json_data, indent=2)
-                        
+
                         # Provide the JSON for download
                         st.download_button(
                             label="Download JSON File",
@@ -713,9 +728,9 @@ def main():
                             file_name="selected_chunks.json",
                             mime="application/json"
                         )
-                        
+
                         st.success("JSON file ready for download!")
-                        
+
                     # Display a preview of the JSON data
                     with st.expander("JSON Data Preview", expanded=True):
                         # Create a simplified preview of the data
@@ -726,13 +741,13 @@ def main():
                                 "title": chunk['title'],
                                 "source": chunk['source'],
                                 "reference": chunk['reference'],
-                                "chunk_number": chunk.get('chunk_number', i+1),
+                                "chunk_number": chunk.get('chunk_number', i + 1),
                                 "score": chunk.get('score', 'N/A'),
                                 # Show just the first 200 chars of chunk content
                                 "chunk_preview": chunk['chunk'][:200] + "..." if len(chunk['chunk']) > 200 else chunk['chunk']
                             }
                             preview_data.append(preview_chunk)
-                        
+
                         # Display the preview as JSON
                         st.json(preview_data)
                 else:

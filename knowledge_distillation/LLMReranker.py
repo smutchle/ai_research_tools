@@ -200,7 +200,7 @@ Document chunks to evaluate:
         """
         return [chunk for chunk in ranked_chunks if chunk['score'] >= min_score]
     
-    def chunk_markdown(self, text: str) -> List[str]:
+    def chunk_markdown(self, text: str, chunk_size: int) -> List[str]:
         """
         Chunk markdown text based on natural section breaks.
         
@@ -231,7 +231,7 @@ Document chunks to evaluate:
             chunks.append('\n'.join(current_chunk))
         
         # If there were no headers, or the chunks are too large, try other delimiters
-        if len(chunks) <= 1 and len(text) > 3000:
+        if len(chunks) <= 1 and len(text) > chunk_size * 1.5:
             chunks = []
             
             # Try splitting by double newlines (paragraphs)
@@ -243,7 +243,7 @@ Document chunks to evaluate:
             for para in paragraphs:
                 para_length = len(para)
                 
-                if current_length + para_length > 2000 and current_chunk:
+                if current_length + para_length > chunk_size and current_chunk:
                     chunks.append('\n\n'.join(current_chunk))
                     current_chunk = [para]
                     current_length = para_length
@@ -256,8 +256,8 @@ Document chunks to evaluate:
         
         return chunks
     
-    def chunk_pdf_text(self, text: str, chunk_size: int = 2000, 
-                      chunk_overlap: int = 200) -> List[str]:
+    def chunk_pdf_text(self, text: str, chunk_size: int, 
+                      chunk_overlap: int) -> List[str]:
         """
         Chunk PDF text based on size and overlap.
         
