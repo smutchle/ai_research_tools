@@ -22,27 +22,36 @@ There are a couple of APIs that you can sign up for if you want commercial level
 - [Optional: Setup and Fund OpenAI API Key](https://platform.openai.com/api-keys)
   - Record the API key
 
-**You will need access to a hosted Ollama instance if you want to use Web Researcher and References Bot.** A server with a NVidia RTX 3090+ with 8+ GB of VRAM is recommended. The RAG Chatbot can work with OpenAI ChatGPT or Anthropic Claude.
+**The RAG Chatbot can work with Google Gemini, OpenAI ChatGPT, Anthropic Claude or a local Ollama model.**
 
-You can install Ollama at [ollama.ai](http://ollama.ai). You will need to download the `phi4:14b` model (or `llama3.1:8b`, etc.).
+**You will need access to a hosted Ollama instance if you want to use Web Researcher and References Bot.** A server with a NVidia RTX 3090+ with 8+ GB of VRAM is recommended.
+
+You can install Ollama at [ollama.ai](http://ollama.ai). You will need to download the `phi4:14b` model (or `gemma3:12b`, `llama3.1:8b`, etc.).
 
 `ollama pull phi4:14b`
 
-We also highly recommend using Anaconda for setting up a virtual python environment to run the apps. [Anaconda download](https://www.anaconda.com/download).
-
 ### Installation
 
-1. Download (or clone) the repository.
-2. Create your anaconda environment:
+0. [Install git version control software](https://git-scm.com/downloads)
+1. [Install anaconda for virtual python environments](https://www.anaconda.com/download)
+2. Download (or clone) the repository.
+
+```
+md ai_tools
+cd ai_tools
+git clone https://github.com/smutchle/ai_research_tools
+```
+
+3. Create your anaconda environment:
 
 ```
     conda create --name ai_research
     conda activate ai_research
 ```
 
-3. Install the required libraries:
+4. Install the required libraries:
 
 `pip install streamlit requests python-dotenv PyPDF2 beautifulsoup4 pandas langchain langchain-community langchain-anthropic langchain-openai langchain-ollama langchain-chroma chromadb shutil jupyter`
 
-4. In each folder, rename .env_sample to .env. Edit each .env file and put in your API key values, etc.
-5. Run the appropriate .sh (Linux/Mac) or .bat (Windows) file. This will launch the respective web interface.
+5. In each folder, rename .env_sample to .env. Edit each .env file and put in your API key values, etc.
+6. Run the appropriate .sh (Linux/Mac) or .bat (Windows) file. This will launch the respective web interface.
