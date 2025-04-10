@@ -516,8 +516,8 @@ with st.sidebar:
     k_value = st.slider(
         "Number of retrieved documents (K)",
         min_value=1,
-        max_value=250,
-        value=10,
+        max_value=500,
+        value=50,
         step=1,
         help="Controls how many relevant documents to retrieve for each query"
     )
@@ -572,7 +572,7 @@ with st.sidebar:
     use_cot = st.checkbox("Use Chain of Thought", value=False)
     
     # Add LLM Reranking option
-    use_reranking = st.checkbox("Use LLM Reranking", value=False)
+    use_reranking = st.checkbox("Use LLM Reranking", value=True)
     st.session_state.use_reranking = use_reranking
     
     # Database operations
