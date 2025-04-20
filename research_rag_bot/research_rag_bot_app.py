@@ -45,6 +45,108 @@ st.set_page_config(
 # Load environment variables from .env file
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 
+def extract_document_metadata(document_path, llm):
+    """
+    Extract metadata from an academic paper using the LLM.
+    Returns author, title, year, journal, full APA reference, and abstract.
+    """
+    try:
+        # Read the document content
+        if document_path.endswith('.pdf'):
+            loader = PyPDFLoader(document_path)
+            doc = loader.load()[0]  # Get the first page for metadata extraction
+            content = doc.page_content
+        else:
+            loader = TextLoader(document_path)
+            doc = loader.load()[0]
+            content = doc.page_content
+        
+        # Truncate content to a reasonable size for the LLM (first 10000 chars)
+        content_preview = content[:2000]
+        
+        # Create prompt for metadata extraction
+        prompt = f"""
+        Extract the following metadata from this academic paper:
+        - Author(s)
+        - Title
+        - Year
+        - Journal/Conference
+        - Full APA reference
+        - Abstract
+
+        Return the extracted metadata in a strict JSON format without any additional text:
+        {{
+            "author": "Author name(s)",
+            "title": "Paper title",
+            "year": "Publication year",
+            "journal": "Journal or conference name",
+            "apa_reference": "Full APA style reference",
+            "abstract": "Paper abstract"
+        }}
+
+        If any field cannot be extracted, use "Unknown" as the value.
+
+        Here's the beginning of the paper:
+        {content_preview}
+        """
+        
+        # print("prompt: ", prompt, "\n\n")
+
+        # Query the LLM for metadata extraction
+        response = llm.invoke(prompt)
+
+        # print("raw response for metadata: ", response, "\n\n")
+        
+        # Extract JSON from the response
+        metadata_str = extract_markdown_content(response.content, "json")
+
+        # print("extracted JSON: ", metadata_str, "\n\n")
+
+        if not metadata_str:
+            metadata_str = response.content
+            
+        metadata = json.loads(metadata_str)
+        return metadata
+    
+    except Exception as e:
+        print(f"Error extracting metadata from {document_path}: {str(e)}")
+        # Return default metadata if extraction fails
+        return {
+            "author": "Unknown",
+            "title": os.path.basename(document_path),
+            "year": "Unknown",
+            "journal": "Unknown",
+            "apa_reference": f"Unknown. ({datetime.datetime.now().year}). {os.path.basename(document_path)}.",
+            "abstract": "No abstract available"
+        }
+
+def save_metadata_json(metadata, source_path, metadata_dir):
+    """
+    Save metadata to a JSON file in the metadata directory with the same basename as the source.
+    """
+    # Create metadata directory if it doesn't exist
+    os.makedirs(metadata_dir, exist_ok=True)
+    
+    # Create JSON filename based on source document name
+    base_name = os.path.splitext(os.path.basename(source_path))[0]
+    json_path = os.path.join(metadata_dir, f"{base_name}.json")
+    
+    # Save metadata to JSON file
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    
+    return json_path
+
+def prepend_reference_to_chunks(chunks, metadata):
+    """
+    Prepend the full APA reference to each chunk as context.
+    """
+    for chunk in chunks:
+        # Add the reference as context at the beginning of each chunk
+        chunk.page_content = f"Reference: {metadata['apa_reference']}\n\n{chunk.page_content}"
+    
+    return chunks
+
 def split_csv(csv_string):
     """
     Split a comma-separated string into a list of strings.
@@ -90,21 +192,60 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
         # Remove existing database if it exists
         if os.path.exists(db_path):
             shutil.rmtree(db_path)
+            
+        # Create metadata directory
+        metadata_dir = os.path.join(docs_dir, "metadata")
+        os.makedirs(metadata_dir, exist_ok=True)
 
         # Get document loaders for different file types
         loaders = get_document_loaders(docs_dir)
 
-        # Load all documents
+
+        ollama_model = os.getenv("OLLAMA_MODEL")
+        if "," in ollama_model:
+            ollama_model = ollama_model.split(',')[0]
+
+        print("Using Ollama model: ", ollama_model, " for metadata...")
+
+        # Create Ollama model for metadata extraction
+        metadata_llm = ChatOllama(
+            base_url=ollama_base_url,
+            model=ollama_model,
+            temperature=0.2
+        )
+
+        # Load all documents and extract metadata
         all_documents = []
         for loader_name, loader in loaders.items():
             try:
                 documents = loader.load()
-                all_documents.extend(documents)
-                st.sidebar.write(f"Loaded {len(documents)} {loader_name} documents")
+                
+                # Process each document for metadata extraction
+                processed_docs = []
+                for doc in documents:
+                    # Get the source path
+                    source_path = doc.metadata.get('source')
+                    if source_path:
+                        # Extract metadata
+                        st.sidebar.write(f"Extracting metadata from {os.path.basename(source_path)}...")
+                        metadata = extract_document_metadata(source_path, metadata_llm)
+                        
+                        # Save metadata to JSON
+                        json_path = save_metadata_json(metadata, source_path, metadata_dir)
+                        st.sidebar.write(f"Saved metadata to {os.path.basename(json_path)}")
+                        
+                        # Add metadata to document's metadata
+                        doc.metadata.update(metadata)
+                        
+                        processed_docs.append(doc)
+                    else:
+                        processed_docs.append(doc)
+                
+                all_documents.extend(processed_docs)
+                st.sidebar.write(f"Loaded and processed {len(documents)} {loader_name} documents")
             except Exception as e:
                 st.sidebar.warning(f"Error loading {loader_name} documents: {str(e)}")
-                st.error(f"Failed to load docs {str(e)}") # Add specific logging
-
+                st.error(f"Failed to load docs {str(e)}")  # Add specific logging
 
         if not all_documents:
             st.error("No documents were loaded. Please check your directory path.")
@@ -118,7 +259,21 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
             is_separator_regex=False,
             separators=["\n\n", "\n", " ", ""]  # Prioritize splitting by paragraph, then newline, then space
         )
-        chunks = text_splitter.split_documents(all_documents)
+        
+        # Process documents one by one to apply the reference prepending
+        all_chunks = []
+        for doc in all_documents:
+            # Split the individual document
+            doc_chunks = text_splitter.split_documents([doc])
+            
+            # Get the metadata for this document
+            doc_metadata = doc.metadata
+            
+            # Prepend reference to each chunk
+            if 'apa_reference' in doc_metadata and doc_metadata['apa_reference'] != "Unknown":
+                doc_chunks = prepend_reference_to_chunks(doc_chunks, doc_metadata)
+            
+            all_chunks.extend(doc_chunks)
 
         # Create embeddings
         embeddings = create_embeddings(embedding_type, embedding_model, ollama_base_url)
@@ -133,7 +288,7 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
         )
 
         vector_store = Chroma.from_documents(
-            documents=chunks,
+            documents=all_chunks,
             embedding=embeddings,
             persist_directory=db_path,
             client=client,
@@ -144,7 +299,7 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
     except Exception as e:
         st.error(f"Error creating vector store: {str(e)}")
         return None
-
+    
 def load_vector_store(db_path, embedding_type, embedding_model, ollama_base_url=None):
     """Load an existing vector store"""
     try:
@@ -466,7 +621,7 @@ if 'retriever' not in st.session_state:
 if 'k_value' not in st.session_state:
     st.session_state.k_value = 10
 if 'chunk_size' not in st.session_state:
-    st.session_state.chunk_size = 2000
+    st.session_state.chunk_size = 1000
 if 'chunk_overlap' not in st.session_state:
     st.session_state.chunk_overlap = 200
 if 'use_reranking' not in st.session_state:
@@ -491,7 +646,7 @@ with st.sidebar:
         "Chunk Size",
         min_value=500,
         max_value=8000,
-        value=2000,
+        value=1000,
         step=100,
         help="Size of text chunks when processing documents (in characters)"
     )
