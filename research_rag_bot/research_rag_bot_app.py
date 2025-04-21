@@ -332,24 +332,24 @@ def create_llm(model_type, model_name, ollama_base_url=None):
         return ChatOllama(
             base_url=ollama_base_url,
             model=model_name,
-            temperature=0.2
+            temperature=0.8
         )
     elif model_type == "OpenAI":
         return ChatOpenAI(
             model=model_name,
-            temperature=0.2,
+            temperature=0.8,
             openai_api_key=os.getenv("OPENAI_API_KEY")
         )
     elif model_type == "Anthropic":
         return ChatAnthropic(
             model=model_name,
-            temperature=0.2,
+            temperature=0.8,
             anthropic_api_key=os.getenv("CLAUDE_API_KEY")
         )
     elif model_type == "Google":
          return ChatGoogleGenerativeAI(
             model=model_name,
-            temperature=0.7,
+            temperature=0.8,
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
     else:
