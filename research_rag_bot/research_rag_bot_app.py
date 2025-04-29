@@ -685,7 +685,7 @@ with st.sidebar:
     # Embedding model selection
     embedding_type = st.selectbox(
         "Select Embedding Model",
-        ["Ollama", "OpenAI", "Google"],
+        split_csv(os.getenv("EMBEDDING_PROVIDERS")),
         index=0
     )
 
@@ -725,7 +725,7 @@ with st.sidebar:
     # Model selection
     model_type = st.selectbox(
         "Select Model Provider",
-        ["Ollama", "OpenAI", "Anthropic", "Google"],
+        split_csv(os.getenv("LLM_PROVIDERS")),
         index=0
     )
 
