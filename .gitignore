@@ -3,3 +3,4 @@ __pycache__
 *.out
 *.pdf
 *.log
+*_files/

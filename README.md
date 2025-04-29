@@ -28,7 +28,9 @@ There are a couple of APIs that you can sign up for if you want commercial level
 
 You can install Ollama at [ollama.ai](http://ollama.ai). You will need to download the `gemma3:12b` model (or `phi4:14b`, `llama3.1:8b`, etc.).
 
-`ollama pull gemma3:12b`
+```bash
+ollama pull gemma3:12b
+```
 
 ### Installation
 
@@ -36,7 +38,7 @@ You can install Ollama at [ollama.ai](http://ollama.ai). You will need to downlo
 1. [Install anaconda for virtual python environments](https://www.anaconda.com/download)
 2. Download (or clone) the repository.
 
-```
+```bash
 md ai_tools
 cd ai_tools
 git clone https://github.com/smutchle/ai_research_tools
@@ -44,14 +46,32 @@ git clone https://github.com/smutchle/ai_research_tools
 
 3. Create your anaconda environment:
 
-```
-    conda create --name ai_research
-    conda activate ai_research
+```bash
+conda create --name ai_research
+conda activate ai_research
 ```
 
 4. Install the required libraries:
 
-`pip install streamlit pandas python-dotenv PyPDF2 requests beautifulsoup4 urllib3 langchain langchain-community langchain-openai langchain-google-genai langchain-anthropic langchain-ollama langchain-chroma chromadb shutil jupyterlab`
+```bash
+pip install streamlit pandas python-dotenv PyPDF2 requests beautifulsoup4 urllib3 langchain langchain-community langchain-openai langchain-google-genai langchain-anthropic langchain-ollama langchain-chroma chromadb shutil jupyterlab
+```
 
-5. In each folder, rename .env_sample to .env. Edit each .env file and put in your API key values, etc.
+5. In each folder, rename `.env_sample` to `.env`. Edit each `.env` file and put in your API key values, etc.
+
+OpenAI uses a different embedding size so you must using the OpenAI embedding model with the OpenAI LLM. To do this, set OpenAI as the default provider in `.env`:
+
+```
+EMBEDDING_PROVIDERS=OpenAI,Ollama,Google
+LLM_PROVIDERS=OpenAI,Ollama,Anthropic,Google
+```
+
+This will cause OpenAI to be the default model and synch the two options.
+
+**When rebuilding the vector database with a different embedding model**, stop the chatbot, delete the `vectorstore` subdirectory in your docs dir and then restart the chatbot. This is due to an issue with chromadb initialization.
+
 6. Run the appropriate .sh (Linux/Mac) or .bat (Windows) file. This will launch the respective web interface.
+
+```
+
+```
