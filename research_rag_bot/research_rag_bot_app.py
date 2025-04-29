@@ -192,14 +192,13 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
         # Remove existing database if it exists
         if os.path.exists(db_path):
             shutil.rmtree(db_path)
-            
+
         # Create metadata directory
         metadata_dir = os.path.join(docs_dir, "metadata")
         os.makedirs(metadata_dir, exist_ok=True)
 
         # Get document loaders for different file types
         loaders = get_document_loaders(docs_dir)
-
 
         ollama_model = os.getenv("OLLAMA_MODEL")
         if "," in ollama_model:
@@ -219,7 +218,7 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
         for loader_name, loader in loaders.items():
             try:
                 documents = loader.load()
-                
+
                 # Process each document for metadata extraction
                 processed_docs = []
                 for doc in documents:
@@ -228,19 +227,39 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
                     if source_path:
                         # Extract metadata
                         st.sidebar.write(f"Extracting metadata from {os.path.basename(source_path)}...")
-                        metadata = extract_document_metadata(source_path, metadata_llm)
-                        
-                        # Save metadata to JSON
-                        json_path = save_metadata_json(metadata, source_path, metadata_dir)
-                        st.sidebar.write(f"Saved metadata to {os.path.basename(json_path)}")
-                        
+
+                        # Check if the metadata file already exists
+                        base_name = os.path.splitext(os.path.basename(source_path))[0]
+                        json_path = os.path.join(metadata_dir, f"{base_name}.json")
+
+                        if os.path.exists(json_path):
+                            # Load the existing metadata
+                            with open(json_path, 'r', encoding='utf-8') as f:
+                                try:
+                                    metadata = json.load(f)
+                                    st.sidebar.write(f"Metadata loaded from {os.path.basename(json_path)}")
+                                except json.JSONDecodeError as e:
+                                    st.sidebar.warning(f"Error decoding JSON from {json_path}: {e}.  Attempting to re-extract metadata.")
+                                    metadata = extract_document_metadata(source_path, metadata_llm)
+                                    json_path = save_metadata_json(metadata, source_path, metadata_dir)
+
+
+                            
+                        else:
+                            # Extract metadata if it doesn't exist
+                            metadata = extract_document_metadata(source_path, metadata_llm)
+
+                            # Save metadata to JSON
+                            json_path = save_metadata_json(metadata, source_path, metadata_dir)
+                            st.sidebar.write(f"Saved metadata to {os.path.basename(json_path)}")
+
                         # Add metadata to document's metadata
                         doc.metadata.update(metadata)
-                        
+
                         processed_docs.append(doc)
                     else:
                         processed_docs.append(doc)
-                
+
                 all_documents.extend(processed_docs)
                 st.sidebar.write(f"Loaded and processed {len(documents)} {loader_name} documents")
             except Exception as e:
@@ -259,20 +278,20 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
             is_separator_regex=False,
             separators=["\n\n", "\n", " ", ""]  # Prioritize splitting by paragraph, then newline, then space
         )
-        
+
         # Process documents one by one to apply the reference prepending
         all_chunks = []
         for doc in all_documents:
             # Split the individual document
             doc_chunks = text_splitter.split_documents([doc])
-            
+
             # Get the metadata for this document
             doc_metadata = doc.metadata
-            
+
             # Prepend reference to each chunk
             if 'apa_reference' in doc_metadata and doc_metadata['apa_reference'] != "Unknown":
                 doc_chunks = prepend_reference_to_chunks(doc_chunks, doc_metadata)
-            
+
             all_chunks.extend(doc_chunks)
 
         # Create embeddings
