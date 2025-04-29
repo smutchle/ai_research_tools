@@ -26,9 +26,9 @@ There are a couple of APIs that you can sign up for if you want commercial level
 
 **You will need access to a hosted Ollama instance if you want to use Web Researcher and References Bot.** A server with a NVidia RTX 3090+ with 8+ GB of VRAM is recommended.
 
-You can install Ollama at [ollama.ai](http://ollama.ai). You will need to download the `phi4:14b` model (or `gemma3:12b`, `llama3.1:8b`, etc.).
+You can install Ollama at [ollama.ai](http://ollama.ai). You will need to download the `gemma3:12b` model (or `phi4:14b`, `llama3.1:8b`, etc.).
 
-`ollama pull phi4:14b`
+`ollama pull gemma3:12b`
 
 ### Installation
 
@@ -51,7 +51,7 @@ git clone https://github.com/smutchle/ai_research_tools
 
 4. Install the required libraries:
 
-`pip install streamlit requests python-dotenv PyPDF2 beautifulsoup4 pandas langchain langchain-community langchain-anthropic langchain-openai langchain-ollama langchain-chroma chromadb shutil jupyter`
+`pip install streamlit pandas python-dotenv PyPDF2 requests beautifulsoup4 urllib3 langchain langchain-community langchain-openai langchain-google-genai langchain-anthropic langchain-ollama langchain-chroma chromadb shutil jupyterlab`
 
 5. In each folder, rename .env_sample to .env. Edit each .env file and put in your API key values, etc.
 6. Run the appropriate .sh (Linux/Mac) or .bat (Windows) file. This will launch the respective web interface.
