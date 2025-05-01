@@ -129,12 +129,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <ol start="3" type="1">
 <li>Create your anaconda environment:</li>
 </ol>
-<div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">conda</span> create <span class="at">--name</span> ai_research</span>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">conda</span> create <span class="at">--name</span> ai_research python=3.10</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">conda</span> activate ai_research</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <ol start="4" type="1">
 <li>Install the required libraries:</li>
 </ol>
-<div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install streamlit pandas python-dotenv PyPDF2 requests beautifulsoup4 urllib3 langchain langchain-community langchain-openai langchain-google-genai langchain-anthropic langchain-ollama langchain-chroma chromadb shutil jupyterlab</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ai_research_tools</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="at">-r</span> requirements.txt</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <ol start="5" type="1">
 <li>In each folder, rename <code>.env_sample</code> to <code>.env</code>. Edit each <code>.env</code> file and put in your API key values, etc.</li>
 </ol>
@@ -144,9 +145,14 @@ LLM_PROVIDERS=OpenAI,Ollama,Anthropic,Google</code></pre>
 <p>This will cause OpenAI to be the default model and synch the two options.</p>
 <p><strong>When rebuilding the vector database with a different embedding model</strong>, stop the chatbot, delete the <code>vectorstore</code> subdirectory in your docs dir and then restart the chatbot. This is due to an issue with chromadb initialization.</p>
 <ol start="6" type="1">
-<li>Run the appropriate .sh (Linux/Mac) or .bat (Windows) file. This will launch the respective web interface.</li>
+<li>Run the appropriate .sh (Linux/Mac) or .bat (Windows) file in the <strong>appropriate sub-directory</strong>. This will launch the respective web interface.</li>
 </ol>
-<pre><code></code></pre>
+<p>Linux/Mac:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> research_rag_bot</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./run_chatbot.sh</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<p>Windows:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode powershell code-with-copy"><code class="sourceCode powershell"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cd</span> research_rag_bot</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>run_chatbot<span class="op">.</span><span class="fu">bat</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </section>
 </section>
 

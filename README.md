@@ -4,10 +4,10 @@ There are currently 4 tools in the AI Research tools platform.
 
 [YouTube Video](https://www.youtube.com/watch?v=p4ygW6npE3Y)
 
-1. Web Researcher - For finding new research papers on the web (i.e. web scraping)
-2. References Bot - For extracting references from PDF papers into APA format using a LLM
-3. RAG Chatbot - A tool to convert your PDF, markdown or text files to a vector database and allow you to chat over them using advanced Retrieval Augmented Generation (RAG). Includes advanced LLM re-ranking techniques, etc.
-4. Knowledge Distiller - A tool for extracting scientific literature meta-data from a corpus of PDF, markdown or text files and then through filtering and prompting creating a distilled data set for use with LLMs. Essentially, human-in-the-loop distillation of scientific literature content. This is useful when you have a large context window LLM but need some level of distillation of many papers.
+1. **Web Researcher** - For finding new research papers on the web (i.e. web scraping)
+2. **References Bot** - For extracting references from PDF papers into APA format using a LLM
+3. **RAG Chatbot** - A tool to convert your PDF, markdown or text files to a vector database and allow you to chat over them using advanced Retrieval Augmented Generation (RAG). Includes advanced LLM re-ranking techniques, etc.
+4. **Knowledge Distiller** - A tool for extracting scientific literature meta-data from a corpus of PDF, markdown or text files and then through filtering and prompting creating a distilled data set for use with LLMs. Essentially, human-in-the-loop distillation of scientific literature content. This is useful when you have a large context window LLM but need some level of distillation of many papers.
 
 ### Preconfiguration
 
@@ -47,14 +47,15 @@ git clone https://github.com/smutchle/ai_research_tools
 3. Create your anaconda environment:
 
 ```bash
-conda create --name ai_research
+conda create --name ai_research python=3.10
 conda activate ai_research
 ```
 
 4. Install the required libraries:
 
 ```bash
-pip install streamlit pandas python-dotenv PyPDF2 requests beautifulsoup4 urllib3 langchain langchain-community langchain-openai langchain-google-genai langchain-anthropic langchain-ollama langchain-chroma chromadb shutil jupyterlab
+cd ai_research_tools
+pip install -r requirements.txt
 ```
 
 5. In each folder, rename `.env_sample` to `.env`. Edit each `.env` file and put in your API key values, etc.
@@ -70,8 +71,18 @@ This will cause OpenAI to be the default model and synch the two options.
 
 **When rebuilding the vector database with a different embedding model**, stop the chatbot, delete the `vectorstore` subdirectory in your docs dir and then restart the chatbot. This is due to an issue with chromadb initialization.
 
-6. Run the appropriate .sh (Linux/Mac) or .bat (Windows) file. This will launch the respective web interface.
+6. Run the appropriate .sh (Linux/Mac) or .bat (Windows) file in the **appropriate sub-directory**. This will launch the respective web interface.
 
+Linux/Mac:
+
+```bash
+cd research_rag_bot
+./run_chatbot.sh
 ```
 
+Windows:
+
+```powershell
+cd research_rag_bot
+run_chatbot.bat
 ```
