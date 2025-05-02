@@ -192,6 +192,9 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
         # Remove existing database if it exists
         if os.path.exists(db_path):
             shutil.rmtree(db_path)
+            
+            # Ensure the directory exists after removal
+            os.makedirs(db_path, exist_ok=True)
 
         # Create metadata directory
         metadata_dir = os.path.join(docs_dir, "metadata")
@@ -199,19 +202,11 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
 
         # Get document loaders for different file types
         loaders = get_document_loaders(docs_dir)
-
-        ollama_model = os.getenv("OLLAMA_MODEL")
-        if "," in ollama_model:
-            ollama_model = ollama_model.split(',')[0]
-
-        print("Using Ollama model: ", ollama_model, " for metadata...")
-
-        # Create Ollama model for metadata extraction
-        metadata_llm = ChatOllama(
-            base_url=ollama_base_url,
-            model=ollama_model,
-            temperature=0.2
-        )
+        
+        # Create the selected LLM for metadata extraction
+        metadata_llm = create_llm(model_type, model_name, ollama_base_url if model_type == "Ollama" else None)
+        
+        st.sidebar.write(f"Using {model_type} model: {model_name} for metadata extraction...")
 
         # Load all documents and extract metadata
         all_documents = []
@@ -242,9 +237,6 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
                                     st.sidebar.warning(f"Error decoding JSON from {json_path}: {e}.  Attempting to re-extract metadata.")
                                     metadata = extract_document_metadata(source_path, metadata_llm)
                                     json_path = save_metadata_json(metadata, source_path, metadata_dir)
-
-
-                            
                         else:
                             # Extract metadata if it doesn't exist
                             metadata = extract_document_metadata(source_path, metadata_llm)
@@ -297,22 +289,34 @@ def create_vector_store(docs_dir, db_path, embedding_type, embedding_model, olla
         # Create embeddings
         embeddings = create_embeddings(embedding_type, embedding_model, ollama_base_url)
 
-        # Initialize Chroma with specific settings
-        client = chromadb.PersistentClient(
-            path=db_path,
-            settings=Settings(
-                anonymized_telemetry=False,
-                allow_reset=True
-            )
-        )
-
+        # Process in batches to avoid token limits
+        batch_size = 100
+        total_chunks = len(all_chunks)
+        total_batches = (total_chunks + batch_size - 1) // batch_size
+        
+        # Initialize an empty vector store
         vector_store = Chroma.from_documents(
-            documents=all_chunks,
+            documents=all_chunks[:1],  # Start with just one document
             embedding=embeddings,
             persist_directory=db_path,
-            client=client,
             collection_name="knowledge_docs"
         )
+        
+        # If there are more documents, add them in batches
+        if len(all_chunks) > 1:
+            for i in range(1, total_chunks, batch_size):
+                batch_num = (i // batch_size) + 1
+                end_idx = min(i + batch_size, total_chunks)
+                batch = all_chunks[i:end_idx]
+                
+                st.sidebar.write(f"Processing batch {batch_num}/{total_batches}...")
+                
+                # Add batch to vector store
+                vector_store.add_documents(documents=batch)
+                
+                st.sidebar.write(f"Batch {batch_num} completed")
+        
+        st.sidebar.write("Vector store created successfully!")
         return vector_store
 
     except Exception as e:
