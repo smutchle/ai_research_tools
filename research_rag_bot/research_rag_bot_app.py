@@ -1,4 +1,3 @@
-
 import streamlit as st
 import os
 from dotenv import load_dotenv
@@ -6,13 +5,9 @@ import json
 import datetime
 import base64
 import glob # Import glob for file listing
-import time
+import time # Import time for sleep
 import shutil
-# Remove chromadb imports
-# import chromadb
-# from chromadb.config import Settings
-# from chromadb.errors import InvalidCollectionException # Import specific exception
-import pandas as pd
+import traceback # Import traceback for detailed error logging
 
 # Import FAISS instead of Chroma
 from langchain_community.vectorstores import FAISS
@@ -90,13 +85,15 @@ def extract_document_metadata(document_path, llm):
                      documents = loader.load()
                      if documents:
                          # Try converting page_content (which might be a dict/list) to string
+                         # Limit preview size
                          content_preview = str(documents[0].page_content)[:10000]
                      else:
                          print(f"Error loading content from {document_path}")
                          content_preview = "Could not load document content."
                 else:
                      loader = loader_class(document_path)
-                     content_preview = preview_logic(loader)[:10000] # Apply logic and limit size
+                     # Apply logic and limit size
+                     content_preview = preview_logic(loader)[:10000]
 
                 if not content_preview.strip():
                      print(f"Warning: Loaded content preview for {document_path} is empty.")
@@ -159,7 +156,7 @@ def extract_document_metadata(document_path, llm):
 
         # print("extracted JSON: ", metadata_str, "\n\n") # Debug print
 
-        # Fallback if markdown extraction fails
+        # Fallback if markdown extraction fails or response wasn't markdown
         if not metadata_str:
             metadata_str = response_content_str
             # Attempt to find the first and last curly brace as a last resort
@@ -181,10 +178,14 @@ def extract_document_metadata(document_path, llm):
             # Ensure required keys exist with default "N/A" if missing or empty
             required_keys = ["file_type_detected", "author", "title", "year", "journal", "apa_reference", "abstract", "description"]
             for key in required_keys:
-                if key not in metadata or not metadata[key]: # Also check for empty strings
+                if key not in metadata or not metadata[key] or str(metadata[key]).strip() == "N/A": # Also check for empty strings and explicit "N/A"
                     metadata[key] = "N/A"
+                else:
+                     # Clean up whitespace
+                    metadata[key] = str(metadata[key]).strip()
 
-            # Use filename if title is N/A or empty
+
+            # Use filename if title is N/A or empty after potential LLM output
             if metadata.get("title", "N/A") == "N/A":
                  metadata["title"] = os.path.basename(document_path)
 
@@ -327,14 +328,16 @@ def split_csv(csv_string):
 
     # Split the string by commas and strip whitespace
     result = [item.strip() for item in csv_string.split(',')]
-    return result
+    # Filter out empty strings that might result from multiple commas or leading/trailing commas
+    return [item for item in result if item]
+
 
 def create_embeddings(embedding_type, embedding_model, ollama_base_url=None):
     """Create the appropriate embedding model based on type"""
     try:
         if embedding_type == "Ollama":
             if not ollama_base_url:
-                st.error("Ollama Base URL is not set.")
+                st.error("Ollama Base URL is not set for embeddings.")
                 return None
             return OllamaEmbeddings(
                 base_url=ollama_base_url,
@@ -354,6 +357,13 @@ def create_embeddings(embedding_type, embedding_model, ollama_base_url=None):
             if not api_key:
                  st.error("Google API key is not set in environment variables.")
                  return None
+            # Google embeddings might benefit from a specific batch size if default is too large/fast
+            # The ResourceExhausted error suggests the rate is too high.
+            # Langchain's GoogleGenerativeAIEmbeddings doesn't expose a `batch_size` directly
+            # in the constructor as of some versions, relying on the underlying client.
+            # The *rate* limit is often better handled by sleeping between *calls* to `add_documents`.
+            # However, if the underlying client *does* batch, a smaller internal batch might help too.
+            # For now, rely on sleeping between add_documents calls.
             return GoogleGenerativeAIEmbeddings(
                 model=embedding_model,
                 google_api_key=api_key
@@ -368,7 +378,7 @@ def create_embeddings(embedding_type, embedding_model, ollama_base_url=None):
 
 # --- FAISS Specific Functions ---
 
-def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_model, model_type, model_name, ollama_base_url=None, llm_temperature=0.2):
+def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_model, model_type, model_name, ollama_base_url_llm=None, ollama_base_url_embedding=None, llm_temperature=0.2, indexing_batch_size=100, batch_delay_seconds=1):
     st.sidebar.write("---")
     st.sidebar.write("🛠️ Create Vector DB button pressed...")
     st.sidebar.write("Scanning documents and checking status...")
@@ -377,7 +387,8 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
     os.makedirs(metadata_dir, exist_ok=True) # Ensure metadata directory exists
 
     # Create the selected LLM for metadata extraction (using the new temperature)
-    metadata_llm = create_llm(model_type, model_name, ollama_base_url if model_type == "Ollama" else None, llm_temperature)
+    # This LLM is only needed for the metadata extraction step during DB build/update
+    metadata_llm = create_llm(model_type, model_name, ollama_base_url_llm if model_type == "Ollama" else None, llm_temperature)
     if metadata_llm is None:
         st.sidebar.error("Failed to initialize LLM for metadata extraction. Aborting DB process.")
         # Update the list of available docs in session state for the Complete Docs section
@@ -385,10 +396,10 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
         st.session_state.selected_files = {name: st.session_state.selected_files.get(name, False) for name in st.session_state.available_docs}
         return None
 
-    st.sidebar.write(f"Using {model_type} model: {model_name} (temp={llm_temperature}) for metadata extraction.")
+    st.sidebar.write(f"Using {model_type} model: {model_name} (temp={llm_temperature}) for metadata extraction during build.")
 
     # Create embeddings
-    embeddings = create_embeddings(embedding_type, embedding_model, ollama_base_url)
+    embeddings = create_embeddings(embedding_type, embedding_model, ollama_base_url_embedding)
     if embeddings is None:
          st.sidebar.error("Failed to initialize embeddings model. Aborting DB process.")
          # Update the list of available docs in session state for the Complete Docs section
@@ -400,33 +411,33 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
     db_exists_logically = False # Flag indicating if we successfully *loaded* an existing DB
 
     # --- Attempt to Load Existing FAISS DB ---
-    # Check if the directory *physically* exists first
-    if os.path.exists(db_path):
-        st.sidebar.write(f"Database directory found at '{db_path}'. Attempting to load existing FAISS index.")
+    # Check if the directory *physically* exists first and contains expected files
+    # FAISS requires both index.faiss and index.pkl
+    faiss_index_file = os.path.join(db_path, "index.faiss")
+    faiss_pkl_file = os.path.join(db_path, "index.pkl")
+
+    if db_path and os.path.exists(db_path) and os.path.exists(faiss_index_file) and os.path.exists(faiss_pkl_file):
+        st.sidebar.write(f"Database directory found at '{db_path}' with expected files. Attempting to load existing FAISS index.")
         try:
             # Attempt to load the existing FAISS index
-            # Setting allow_dangerous_deserialization=True as required by recent library versions
+            # Setting allow_dangerous_deserialization=True as required by recent library versions for index.pkl
             loaded_faiss = FAISS.load_local(db_path, embeddings, allow_dangerous_deserialization=True)
 
             vector_store = loaded_faiss # Successfully loaded!
             st.sidebar.write(f"Existing FAISS index loaded from '{db_path}'.")
             db_exists_logically = True
-            try:
-                # FAISS doesn't have a simple count(). docstore stores documents.
-                # This count is an approximation based on the internal structure and might not be exact or stable.
-                # A simpler check might just be len(vector_store.index) if the index is guaranteed non-empty.
-                # Relying on the successful load is often sufficient.
-                 st.sidebar.write(f"Index loaded. Ready for search.") # Removed count for stability
-            except Exception as e:
-                # This catch block might not be needed if the load was successful, but keep for safety
-                st.sidebar.warning(f"Could not perform post-load check on index: {e}")
+            # No simple count() in loaded FAISS, but successful load is enough to know it's functional.
+            st.sidebar.write(f"Index loaded. Ready for search.")
 
 
         except Exception as e:
             # Any error during load -> Treat as non-existent or corrupt for this run
-            # IMPORTANT: Do NOT delete the directory here based on the requirement.
-            st.error(f"Error loading existing database at '{db_path}': {e}. Database might be corrupt, incompatible, or missing files. Please manually delete the '{os.path.basename(db_path)}' directory to force a rebuild.")
-            st.sidebar.warning(f"Error loading FAISS index: {e}. Cannot load existing DB.")
+            # The error message from FAISS.load_local usually gives a hint (like FileNotFoundError)
+            st.error(f"Error loading existing database at '{db_path}': {e}. Database might be corrupt, incompatible, or missing files. Please manually delete the '{os.path.basename(db_path)}' directory to force a rebuild. Check console for traceback.")
+            st.sidebar.error(f"Error loading FAISS index: {e}. Cannot load existing DB.")
+            print(f"\n--- Error loading FAISS index from {db_path} ---\n")
+            traceback.print_exc() # Print traceback to console
+            print("\n---------------------------------------------\n")
             db_exists_logically = False # Loading failed
 
 
@@ -437,18 +448,16 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
     docs_to_add_paths = [] # Paths of documents that need to be added
 
     # Determine which documents need processing (either for new build or incremental update)
-    documents_requiring_metadata_check = all_source_files # We need to check metadata for all source files
-
     # If we successfully loaded an existing DB, only process files without metadata
     if db_exists_logically:
-         st.sidebar.write("Checking documents for incremental update...")
+         st.sidebar.write("Checking documents for incremental update (looking for missing metadata files)...")
          files_without_metadata = []
          for source_path in all_source_files:
              base_name = os.path.splitext(os.path.basename(source_path))[0]
              json_path = os.path.join(metadata_dir, f"{base_name}.json")
              if os.path.exists(json_path):
-                 # Document metadata exists, assume it was processed in a prior run
-                 st.sidebar.write(f"⏭️ Skipping {os.path.basename(source_path)}: Metadata exists.")
+                 # Document metadata exists, assume it was processed in a prior run for incremental update
+                 st.sidebar.write(f"⏭️ Skipping {os.path.basename(source_path)}: Metadata exists. (Assumes file content hasn't changed)") # Add note about assumption
              else:
                  # Metadata does not exist, this document needs to be added
                  st.sidebar.write(f"✅ Marking {os.path.basename(source_path)} for addition (Missing metadata).")
@@ -473,10 +482,32 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
         else:
              st.sidebar.write("- No existing metadata files found to clean.")
 
+        # Also clean up the FAISS directory contents if load failed or dir didn't exist (to ensure a clean slate for save_local)
+        if db_path and os.path.exists(db_path): # Only try to clean if the directory exists
+             st.sidebar.write(f"Cleaning up existing FAISS directory contents at '{db_path}' for full rebuild...")
+             try:
+                 # Remove directory contents, but keep the directory itself
+                 for item in os.listdir(db_path):
+                     item_path = os.path.join(db_path, item)
+                     if os.path.isfile(item_path):
+                         os.remove(item_path)
+                         st.sidebar.write(f"- Removed file: {item}")
+                     elif os.path.isdir(item_path):
+                         shutil.rmtree(item_path)
+                         st.sidebar.write(f"- Removed directory: {item}")
+                 st.sidebar.write("Finished cleaning FAISS directory contents.")
+             except Exception as e:
+                 st.sidebar.warning(f"Error cleaning FAISS directory contents at '{db_path}': {e}")
+                 print(f"\n--- Error cleaning FAISS directory {db_path} ---\n")
+                 traceback.print_exc() # Print traceback to console
+                 print("\n---------------------------------------------\n")
+
+        # If db_path is None (e.g. docs_dir is empty), nothing to clean here, handled below.
+
 
     if not docs_to_add_paths and not db_exists_logically:
         st.error("No documents found or marked for processing, and no existing database was successfully loaded. Cannot proceed.")
-        # Update the list of available docs in session state
+        # Update the list of available docs in session state for the Complete Docs section
         st.session_state.available_docs = list_source_document_basenames(docs_dir) # Re-list available after processing attempt
         st.session_state.selected_files = {name: st.session_state.selected_files.get(name, False) for name in st.session_state.available_docs}
         return None # Return None if no DB exists or loaded AND no docs to add
@@ -489,6 +520,7 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
 
 
     st.sidebar.write(f"Processing {len(docs_to_add_paths)} documents for addition.")
+    st.sidebar.write("(This may take time for many documents...)")
 
     # --- Process documents to be added ---
     processed_docs_for_addition = []
@@ -511,11 +543,17 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
                 metadata = {} # Use empty metadata if LLM failed
             else:
                 metadata = extract_document_metadata(source_path, metadata_llm)
-                json_path = save_metadata_json(metadata, source_path, metadata_dir)
-                if json_path:
-                    st.sidebar.write(f"Saved metadata for {os.path.basename(source_path)}")
+                # Only attempt to save metadata if extraction was somewhat successful (returned a dict)
+                if isinstance(metadata, dict) and metadata.get('file_type_detected') != 'Unknown': # Basic check for valid extraction
+                    json_path = save_metadata_json(metadata, source_path, metadata_dir)
+                    if json_path:
+                        st.sidebar.write(f"Saved metadata for {os.path.basename(source_path)}")
+                    else:
+                        st.sidebar.warning(f"Failed to save metadata for {os.path.basename(source_path)}. Proceeding without saved metadata.")
                 else:
-                     st.sidebar.warning(f"Failed to save metadata for {os.path.basename(source_path)}. Proceeding without saved metadata.")
+                    st.sidebar.warning(f"Metadata extraction for {os.path.basename(source_path)} was not successful. Proceeding without saved metadata.")
+                    # Use the potentially incomplete metadata dict if extraction wasn't fully "Unknown"
+                    if not isinstance(metadata, dict): metadata = {}
 
 
             # Add source and metadata to each document chunk
@@ -528,14 +566,17 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
                  processed_docs_for_addition.append(doc)
 
         except Exception as e:
-            st.sidebar.error(f"Error processing document {os.path.basename(source_path)}: {str(e)}. Skipping.")
+            st.sidebar.error(f"Error processing document {os.path.basename(source_path)}: {str(e)}. Check console for traceback. Skipping.")
+            print(f"\n--- Error processing document: {source_path} ---\n")
+            traceback.print_exc() # Print traceback to console
+            print("\n---------------------------------------------\n")
+
 
     if not processed_docs_for_addition:
         if not db_exists_logically:
             st.error("No documents were successfully processed to create a new database.")
         else:
             st.sidebar.write("No *new* documents were successfully processed to add to the database.")
-        # Update the list of available docs in session state
         st.session_state.available_docs = list_source_document_basenames(docs_dir)
         st.session_state.selected_files = {name: st.session_state.selected_files.get(name, False) for name in st.session_state.available_docs}
         return vector_store if db_exists_logically else None # Return loaded DB if exists, else None
@@ -563,7 +604,11 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
          else:
              st.sidebar.warning(f"Document part found without source path after processing. Splitting without specific reference.")
              # Split directly, prepend_reference_to_chunks will use generic "Unknown Document" if metadata is missing
-             chunks_to_add.extend(text_splitter.split_documents([doc]))
+             # Ensure metadata is passed, even if it's just the original doc metadata
+             # Use the document's own metadata if source is missing (fallback)
+             metadata = doc.metadata if doc.metadata else {}
+             doc_chunks = text_splitter.split_documents([doc])
+             chunks_to_add.extend(prepend_reference_to_chunks(doc_chunks, metadata))
 
 
     for source_path, docs_from_source in docs_by_source.items():
@@ -572,8 +617,11 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
             # Load saved metadata if available, otherwise use metadata from the first doc part
             metadata = load_metadata_json(source_path, metadata_dir)
             if metadata is None and docs_from_source:
-                 metadata = docs_from_source[0].metadata # Fallback to embedded metadata
+                 # Fallback to using the metadata embedded in the documents themselves
+                 metadata = docs_from_source[0].metadata
                  st.sidebar.warning(f"Could not load saved metadata for {os.path.basename(source_path)}, using embedded metadata.")
+            elif metadata is None:
+                 metadata = {} # No metadata at all
 
             if metadata:
                 # Ensure source in metadata is the full path before prepending if it wasn't there
@@ -585,7 +633,10 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
             chunks_to_add.extend(doc_chunks)
             st.sidebar.write(f"- Split '{os.path.basename(source_path)}' into {len(doc_chunks)} chunks.")
         except Exception as e:
-            st.sidebar.error(f"Error splitting or prepping chunks for {os.path.basename(source_path)}: {e}. Skipping chunks for this document.")
+            st.sidebar.error(f"Error splitting or prepping chunks for {os.path.basename(source_path)}: {e}. Check console for traceback. Skipping chunks for this document.")
+            print(f"\n--- Error splitting/prepping chunks for: {source_path} ---\n")
+            traceback.print_exc() # Print traceback to console
+            print("\n---------------------------------------------\n")
 
 
     if not chunks_to_add:
@@ -598,46 +649,111 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
         return vector_store if db_exists_logically else None # Return loaded DB if exists, else None
 
 
-    # --- Add the chunks to the vector store ---
+    # --- Add the chunks to the vector store in batches ---
     total_chunks = len(chunks_to_add)
+    st.sidebar.write(f"Adding {total_chunks} chunks to the database in batches of {indexing_batch_size} with {batch_delay_seconds}s delay...")
 
-    if not db_exists_logically:
-        # Create a new FAISS index from all chunks
-        st.sidebar.write(f"Creating a new FAISS index with {total_chunks} chunks...")
-        try:
-            # Ensure the directory exists before creating/saving
-            os.makedirs(db_path, exist_ok=True)
-            # Create the new index
-            new_vector_store = FAISS.from_documents(
-                documents=chunks_to_add,
+    # Create progress bar for adding chunks
+    add_progress_bar = st.sidebar.progress(0.0, text=f"Added chunks 0/{total_chunks}")
+
+    try:
+        if not db_exists_logically:
+            # Create a new FAISS index from the *first* batch
+            st.sidebar.write(f"Creating initial FAISS index with the first {min(indexing_batch_size, total_chunks)} chunks...")
+            if db_path:
+                 os.makedirs(db_path, exist_ok=True) # Ensure dir exists before creating index
+            else:
+                 st.error("Documents directory not set or invalid. Cannot create database.")
+                 st.sidebar.error("Documents directory not set or invalid. Cannot create database.")
+                 add_progress_bar.empty()
+                 return None
+
+            # Create from the first batch
+            vector_store = FAISS.from_documents(
+                documents=chunks_to_add[:indexing_batch_size],
                 embedding=embeddings
             )
-            # Save the new index
-            new_vector_store.save_local(db_path)
+            st.sidebar.write(f"Initial index created with {len(chunks_to_add[:indexing_batch_size])} chunks.")
+            added_count = len(chunks_to_add[:indexing_batch_size])
+            add_progress_bar.progress(added_count / total_chunks, text=f"Added chunks {added_count}/{total_chunks}")
 
-            vector_store = new_vector_store
-            st.sidebar.write("✅ New FAISS index created and saved successfully!")
-        except Exception as e:
-            st.error(f"Error creating/saving new FAISS index: {str(e)}")
-            st.sidebar.error(f"Error creating/saving new FAISS index: {str(e)}")
-            # Note: We are NOT cleaning up db_path directory automatically on create error
-            vector_store = None # Ensure vector_store is None on failure
+            # Process the rest of the chunks incrementally
+            chunks_iterator = chunks_to_add[indexing_batch_size:]
+            if chunks_iterator:
+                 st.sidebar.write(f"Adding remaining {len(chunks_iterator)} chunks...")
+                 # Add delay before the first incremental batch
+                 if batch_delay_seconds > 0:
+                      time.sleep(batch_delay_seconds)
 
-    elif db_exists_logically and vector_store:
-        # Add documents to the existing vector store instance loaded earlier
-        st.sidebar.write(f"Adding {total_chunks} new chunks to the existing database...")
-        try:
-            # Add the chunks
-            vector_store.add_documents(documents=chunks_to_add)
-            # Save the updated index
-            vector_store.save_local(db_path)
+        elif db_exists_logically and vector_store:
+            # Add documents to the existing vector store instance loaded earlier
+            st.sidebar.write("Adding chunks to existing database...")
+            added_count = 0 # Start count from 0 for the new chunks
+            chunks_iterator = chunks_to_add
+            add_progress_bar.progress(0.0, text=f"Added chunks 0/{total_chunks}")
 
-            st.sidebar.write(f"✅ {total_chunks} new chunks added and index saved!")
 
-        except Exception as e:
-             st.sidebar.error(f"Error adding documents or saving existing index: {e}")
-             st.error(f"Error adding documents or saving existing index: {e}")
-             # Keep vector_store as the potentially partially updated object, but show error
+        # Process chunks in batches and add to vector store
+        # Use range with step to get batch indices
+        for i in range(0, len(chunks_iterator), indexing_batch_size):
+            batch = chunks_iterator[i:i + indexing_batch_size]
+            if not batch:
+                 continue # Should not happen with range logic, but safety check
+
+            try:
+                # Add the batch
+                vector_store.add_documents(documents=batch)
+                added_count += len(batch)
+                add_progress_bar.progress(added_count / total_chunks, text=f"Added chunks {added_count}/{total_chunks}")
+                st.sidebar.write(f"- Added {len(batch)} chunks. Total added in this run: {added_count}")
+
+                # Add delay after adding a batch, unless it's the last batch
+                if i + indexing_batch_size < len(chunks_iterator) and batch_delay_seconds > 0:
+                    st.sidebar.write(f"Waiting {batch_delay_seconds}s...")
+                    time.sleep(batch_delay_seconds)
+
+            except Exception as e:
+                 st.sidebar.error(f"Error adding batch of documents: {e}. Check console for traceback. Stopping addition.")
+                 st.error(f"Error adding batch of documents: {e}. Database may be incomplete. Check console for traceback.")
+                 print(f"\n--- Error adding batch of documents ---\n")
+                 traceback.print_exc() # Print traceback to console
+                 print("\n---------------------------------------------\n")
+                 # Even if a batch fails, try to save what was successfully added so far
+                 break # Stop processing further batches on error
+
+
+        # Save the final index state after processing all batches (or after an error)
+        # Only attempt to save if vector_store object is valid (was created or loaded)
+        if vector_store and db_path:
+             st.sidebar.write(f"Saving updated FAISS index to {db_path}...")
+             try:
+                 vector_store.save_local(db_path)
+                 st.sidebar.write("✅ FAISS index saved successfully!")
+             except Exception as e:
+                 st.sidebar.error(f"Error saving FAISS index: {e}. Database might be corrupt. Check console for traceback.")
+                 st.error(f"Error saving FAISS index: {e}. Database might be corrupt. Check console for traceback.")
+                 print(f"\n--- Error saving FAISS index to {db_path} ---\n")
+                 traceback.print_exc() # Print traceback to console
+                 print("\n---------------------------------------------\n")
+                 # If saving fails, the vector_store object in memory is still the last state, but disk is bad.
+                 # It's safer to treat this as a failure state for the UI.
+                 vector_store = None # Invalidate the in-memory vector_store if saving failed.
+        elif not db_path:
+             st.sidebar.warning("Cannot save database: Documents directory path is invalid.")
+             st.error("Cannot save database: Documents directory path is invalid.")
+
+
+    except Exception as e:
+        # Catch potential errors during the initial from_documents call (if not db_exists_logically)
+        # or other unexpected errors in this final block
+        st.error(f"Critical error during database creation: {str(e)}. Check console for traceback.")
+        st.sidebar.error(f"Critical error during database creation: {str(e)}")
+        print(f"\n--- Critical error during database creation ---\n")
+        traceback.print_exc() # Print traceback to console
+        print("\n---------------------------------------------\n")
+        vector_store = None # Ensure state is None on critical failure.
+
+    add_progress_bar.empty() # Clear the progress bar after completion or error
 
     # Update the list of available docs in session state regardless of DB success
     st.session_state.available_docs = list_source_document_basenames(docs_dir)
@@ -649,8 +765,12 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
 def load_vector_store(db_path, embedding_type, embedding_model, ollama_base_url=None):
     """Load an existing FAISS vector store"""
     st.sidebar.write("Attempting to load existing vector database...")
-    if not os.path.exists(db_path):
-        st.sidebar.write(f"Database directory not found at '{db_path}'. Cannot load.")
+    # Check if the directory exists and contains expected files
+    faiss_index_file = os.path.join(db_path, "index.faiss") if db_path else None
+    faiss_pkl_file = os.path.join(db_path, "index.pkl") if db_path else None
+
+    if not (db_path and os.path.exists(db_path) and os.path.exists(faiss_index_file) and os.path.exists(faiss_pkl_file)):
+        st.sidebar.write(f"Database directory or required files (index.faiss, index.pkl) not found or path is invalid at '{db_path}'. Cannot load.")
         return None
 
     try:
@@ -675,8 +795,11 @@ def load_vector_store(db_path, embedding_type, embedding_model, ollama_base_url=
         return vector_store
     except Exception as e:
         # IMPORTANT: Catch *any* error during load and return None, do NOT delete files.
-        st.error(f"Error loading vector store from '{db_path}': {str(e)}. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path)}' directory to force a rebuild.")
+        st.error(f"Error loading vector store from '{db_path}': {str(e)}. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path)}' directory to force a rebuild. Check console for traceback.")
         st.sidebar.error(f"Error loading vector store: {str(e)}. Manual delete and rebuild required.")
+        print(f"\n--- Error loading FAISS index from {db_path} ---\n")
+        traceback.print_exc() # Print traceback to console
+        print("\n---------------------------------------------\n")
         return None # Return None on any load error
 
 
@@ -733,7 +856,7 @@ def create_llm(model_type, model_name, ollama_base_url=None, temperature=0.2):
          print(f"Error creating LLM {model_name} ({model_type}): {e}") # Log to console
          return None
 
-def initialize_conversation(vector_store, model_type, model_name, k_value=10, ollama_base_url=None, use_reranking=False, num_chunks_kept=4, llm_temperature=0.2):
+def initialize_conversation(vector_store, model_type, model_name, k_value=10, ollama_base_url_llm=None, use_reranking=False, num_chunks_kept=4, llm_temperature=0.2):
     """Initialize the conversation chain"""
     st.sidebar.write("Initializing conversation chain...")
     try:
@@ -743,7 +866,7 @@ def initialize_conversation(vector_store, model_type, model_name, k_value=10, ol
             return None, None, None # Return None for conversation, llm, retriever
 
         # Create the LLM using the provided temperature
-        llm = create_llm(model_type, model_name, ollama_base_url, llm_temperature)
+        llm = create_llm(model_type, model_name, ollama_base_url_llm, llm_temperature)
         if llm is None:
              st.warning(f"Cannot initialize conversation: LLM creation failed for {model_name} ({model_type}). Check API keys/endpoints.")
              st.sidebar.error(f"Cannot initialize conversation: LLM creation failed for {model_name} ({model_type}).")
@@ -772,13 +895,20 @@ def initialize_conversation(vector_store, model_type, model_name, k_value=10, ol
                      st.sidebar.error("LLM not available for Reranking.")
                      use_reranking = False # Fallback
                 else:
+                    # Ensure the compressor LLM is the same LLM used for the conversation chain
                     compressor = LLMChainExtractor.from_llm(llm)
-                    retriever = ContextualCompressionRetriever(base_compressor=compressor, base_retriever=retriever, k=num_chunks_kept_actual)
+                    # Ensure the retriever passed to ContextualCompressionRetriever is the basic one from the vector store
+                    retriever = ContextualCompressionRetriever(base_compressor=compressor, base_retriever=vector_store.as_retriever(search_kwargs={"k": k_value}), k=num_chunks_kept_actual)
                     st.sidebar.write("Reranking retriever created.")
             except Exception as e:
-                st.sidebar.error(f"Failed to create Reranking retriever: {e}. Proceeding without reranking.")
+                st.sidebar.error(f"Failed to create Reranking retriever: {e}. Proceeding without reranking. Check console for traceback.")
                 st.warning(f"Failed to set up LLM Reranking: {e}. Reranking disabled.")
+                print(f"\n--- Error setting up LLM Reranking ---\n")
+                traceback.print_exc() # Print traceback to console
+                print("\n---------------------------------------------\n")
                 use_reranking = False # Fallback
+                # Revert retriever to basic one if reranking setup failed
+                retriever = vector_store.as_retriever(search_kwargs={"k": k_value})
 
 
         # Make the chain verbose so we can see prompts in stdout
@@ -793,47 +923,42 @@ def initialize_conversation(vector_store, model_type, model_name, k_value=10, ol
         return conversation, llm, retriever # Return all three instances
 
     except Exception as e:
-        st.error(f"Error initializing conversation: {str(e)}")
+        st.error(f"Error initializing conversation: {str(e)}. Check console for traceback.")
         st.sidebar.error(f"Error initializing conversation: {str(e)}")
+        print(f"\n--- Error initializing conversation chain ---\n")
+        traceback.print_exc() # Print traceback to console
+        print("\n---------------------------------------------\n")
         return None, None, None
 
 def extract_markdown_content(text: str, type: str = "json") -> str:
         """Extract content from markdown code blocks."""
         # Ensure text is a string
         text = str(text)
-        start_tag = f"```{type}"
+        start_tag_specific = f"```{type}"
+        start_tag_generic = """```"""
         end_tag = """```"""
 
-        start_idx = text.find(start_tag)
+        # Prefer specific tag
+        start_idx = text.find(start_tag_specific)
+        offset = len(start_tag_specific)
+
         if start_idx == -1:
-             # If start tag not found, check for just ``` (often used for simple code blocks)
-             start_tag_generic = """```"""
+             # If specific tag not found, look for generic tag
              start_idx_generic = text.find(start_tag_generic)
              if start_idx_generic != -1:
-                  start_idx = start_idx_generic + len(start_tag_generic)
-                  # Check if the line after ``` starts with the requested type (e.g. "json")
-                  newline_after_generic = text.find('\n', start_idx_generic)
-                  if newline_after_generic != -1 and text[start_idx_generic:newline_after_generic].strip() == start_tag_generic.strip():
-                       # If ``` is on a line by itself, then the content starts after the newline
-                       start_idx = newline_after_generic + 1
-                  else:
-                       # If something like ```python, the start is after the type name + newline
-                       newline_after_type = text.find('\n', start_idx_generic + len(start_tag_generic))
-                       if newline_after_type != -1:
-                            start_idx = newline_after_type + 1
-                       else:
-                            # Fallback if newline isn't found after ```type or ```
-                            start_idx = start_idx_generic + len(start_tag_generic)
-
+                  start_idx = start_idx_generic
+                  offset = len(start_tag_generic)
              else:
-                # If neither ```json nor ``` is found, return the whole text after stripping
+                # If neither tag is found, return the stripped text assuming no markdown block
                 return text.strip()
 
-        else: # Found ```json
-            start_idx += len(start_tag)
-             # Handle potential newline immediately after start_tag
-            if start_idx < len(text) and text[start_idx] == '\n':
-                 start_idx += 1
+        # Adjust start_idx to be after the newline following the tag
+        newline_after_tag = text.find('\n', start_idx + offset)
+        if newline_after_tag != -1:
+            start_idx = newline_after_tag + 1
+        else:
+            # If no newline after tag, start immediately after the tag
+            start_idx = start_idx + offset
 
 
         end_idx = text.rfind(end_tag, start_idx) # Search for end tag after start
@@ -881,11 +1006,15 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
         else:
              st.sidebar.write(f"Retrieved {len(retrieved_docs)} documents for context.")
              # Ensure we display the source correctly, using metadata
-             context = "\n\n".join([f"Source: {doc.metadata.get('source', 'Unknown File')}\nContent: {doc.page_content}" for doc in retrieved_docs])
+             # Use basename in display context for brevity
+             context = "\n\n".join([f"Source: {os.path.basename(doc.metadata.get('source', 'Unknown File'))}\nContent: {doc.page_content}" for doc in retrieved_docs])
 
 
     except Exception as e:
-        st.sidebar.error(f"Error retrieving documents for CoT: {e}")
+        st.sidebar.error(f"Error retrieving documents for CoT: {e}. Check console for traceback.")
+        print(f"\n--- Error retrieving documents for CoT ---\n")
+        traceback.print_exc() # Print traceback to console
+        print("\n---------------------------------------------\n")
         context = "Could not retrieve context documents due to an error."
 
 
@@ -923,8 +1052,11 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
     except (json.JSONDecodeError, ValueError, Exception) as e:
         print(f"Error extracting/parsing JSON plan: {e}")
         if plan_response:
-             print(f"LLM Output (first 500 chars): {plan_response.content[:500]}...") # Debug print
-        st.warning("Failed to extract valid plan from LLM. Using default steps.")
+             print(f"LLM Output (first 500 chars): {str(plan_response.content)[:500]}...") # Debug print response object
+        st.warning("Failed to extract valid plan from LLM. Using default steps. Check console for traceback.")
+        print(f"\n--- Error extracting/parsing CoT plan ---\n")
+        traceback.print_exc() # Print traceback to console
+        print("\n---------------------------------------------\n")
         # If JSON parsing fails or format is invalid, create a default plan
         steps = [
             "Step 1: Analyze the user's question and identify the core concepts and information required.",
@@ -944,7 +1076,9 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
 
     # Initialize the growing context that will accumulate through steps
     # Start with the original context from document retrieval
-    growing_context = f"Original Document Context:\n---\n{context}\n---\n\n"
+    # Ensure original context includes source info again here for the LLM
+    initial_context_for_llm = f"Original Document Context:\n---\n{context}\n---\n\n"
+    growing_context = initial_context_for_llm
 
     # Execute each step
     for i in range(total_steps):
@@ -989,11 +1123,14 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
         step_result = ""
         try:
             step_response = llm.invoke(step_prompt)
-            step_result = step_response.content
+            step_result = str(step_response.content) # Ensure it's a string
         except Exception as e:
-            step_result = f"Error executing step: {e}"
+            step_result = f"Error executing step {i+1}: {e}"
             st.warning(f"Error in CoT step {i+1}: {e}")
             st.sidebar.warning(f"Error in CoT step {i+1}: {e}")
+            print(f"\n--- Error executing CoT Step {i+1} ---\n")
+            traceback.print_exc() # Print traceback to console
+            print("\n---------------------------------------------\n")
 
 
         # Add to outputs list (for summary/display later)
@@ -1033,12 +1170,15 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
     final_answer = ""
     try:
         final_response = llm.invoke(final_answer_prompt)
-        final_answer = final_response.content
+        final_answer = str(final_response.content) # Ensure it's a string
         st.sidebar.write("✅ Chain of Thought process completed.")
     except Exception as e:
         final_answer = f"Error generating final answer after steps: {e}"
         st.error(final_answer)
         st.sidebar.error(final_answer)
+        print(f"\n--- Error generating final answer for CoT ---\n")
+        traceback.print_exc() # Print traceback to console
+        print("\n---------------------------------------------\n")
         # Fallback: if final synthesis fails, maybe just show the step results
         # final_answer = "Could not synthesize final answer. Here are the step results:\n\n" + "\n\n---\n\n".join(step_output_display)
 
@@ -1081,9 +1221,12 @@ This document contains a conversation with the RAG Chatbot exported on {now}.
 
         if role == "user":
             qmd_content += f"\n## User Question {i//2 + 1}\n\n"
+            # Escape potential Quarto/Markdown conflicts in user content?
+            # For simplicity, just include raw content for now.
             qmd_content += f"**User:**\n\n{content}\n\n" # Added markdown bold and newlines
         else:  # assistant
             qmd_content += f"\n## Assistant Response {i//2 + 1}\n\n"
+            # Include assistant content (which might contain markdown)
             qmd_content += f"**Assistant:**\n\n{content}\n\n" # Added markdown bold and newlines
 
     return qmd_content
@@ -1108,12 +1251,9 @@ def get_document_loader(file_path):
             return TextLoader(file_path)
         elif ext in [".json", ".jsonl"]:
             # Note: JSONLoader requires a jq_schema. "." loads the root object.
-            # This might load the whole file as one "document".
-            # For line-delimited JSONL, need different approach or jq schema for each line.
-            # This loader might need customization based on JSON structure.
-             # st.sidebar.warning(f"Using generic JSONLoader for {os.path.basename(file_path)}. May need custom schema.")
-             # Use text_content=True for simplicity, especially in Complete Docs mode
-             return JSONLoader(file_path=file_path, jq_schema=".", text_content=True)
+            # Using text_content=True attempts to get text content from the parsed JSON.
+            return JSONLoader(file_path=file_path, jq_schema=".", text_content=True)
+
         elif ext == ".csv":
             return CSVLoader(file_path)
         elif ext == ".ipynb":
@@ -1122,6 +1262,7 @@ def get_document_loader(file_path):
             return None # Indicate unsupported file type
     except Exception as e:
          st.sidebar.error(f"Error creating loader for {os.path.basename(file_path)} (ext: {ext}): {e}")
+         # Note: Not printing traceback here as it's in the document processing loop's catch block
          return None
 
 # Helper to list source documents excluding metadata directory
@@ -1130,12 +1271,15 @@ def list_source_documents(docs_dir):
     if not docs_dir or not os.path.isdir(docs_dir):
         return []
     metadata_dir = os.path.join(docs_dir, "metadata")
+    db_dir = os.path.join(docs_dir, "vectorstore") # Also exclude vectorstore dir
     # Use glob to find all files recursively
     all_files = glob.glob(os.path.join(docs_dir, "**/*"), recursive=True)
-    # Filter out directories and files within the metadata directory
+    # Filter out directories and files within the metadata or vectorstore directories
     source_files = [
         f for f in all_files
-        if os.path.isfile(f) and not os.path.normpath(f).startswith(os.path.normpath(metadata_dir))
+        if os.path.isfile(f)
+        and not os.path.normpath(f).startswith(os.path.normpath(metadata_dir))
+        and not os.path.normpath(f).startswith(os.path.normpath(db_dir))
     ]
     return source_files
 
@@ -1170,6 +1314,11 @@ if 'num_chunks_kept' not in st.session_state:
     st.session_state.num_chunks_kept = 4
 if 'temperature' not in st.session_state:
     st.session_state.temperature = 0.2 # Default temperature as requested
+if 'indexing_batch_size' not in st.session_state:
+     st.session_state.indexing_batch_size = 100 # Default batch size for adding to index
+if 'batch_delay_seconds' not in st.session_state:
+     st.session_state.batch_delay_seconds = 1 # Default delay between batches
+
 
 # New session state for Complete Documents feature
 if 'use_complete_docs' not in st.session_state:
@@ -1182,6 +1331,9 @@ if 'selected_files' not in st.session_state:
 # Session state to track current LLM settings for re-initialization check
 if 'current_llm_params' not in st.session_state:
      st.session_state.current_llm_params = None
+# Session state to track current embedding settings for re-initialization check
+if 'current_embedding_params' not in st.session_state:
+     st.session_state.current_embedding_params = None
 
 
 # Title and description
@@ -1200,6 +1352,10 @@ with st.sidebar:
         except OSError as e:
             st.error(f"Error creating/accessing documents directory {docs_dir}: {e}")
             docs_dir = None # Set to None if invalid/inaccessible
+
+    # The path where FAISS saves its index and document store (calculated once per rerun based on docs_dir)
+    db_path = os.path.join(docs_dir, "vectorstore") if docs_dir else None
+
 
     # Use expander for Vector DB Settings
     with st.expander("Vector DB Settings", expanded=False): # Collapsed by default
@@ -1235,21 +1391,55 @@ with st.sidebar:
         )
 
         embedding_model = "" # Default placeholder
+        ollama_base_url_embedding = None # Need a separate var for embedding URL if different
+
         if embedding_type == "Ollama":
             ollama_embedding_model_str = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
-            embedding_model = st.text_input("Ollama Embedding Model", ollama_embedding_model_str, key="ollama_embedding_model_input")
+            embedding_model = st.text_input("Ollama Embedding Model", ollama_embedding_model_str, key="ollama_embedding_model_input_embed")
+            ollama_base_url_embedding = st.text_input("Ollama Base URL for Embedding", os.getenv("OLLAMA_END_POINT", "http://localhost:11434"), key="ollama_base_url_input_embed")
         elif embedding_type == "OpenAI":
             openai_embedding_model_str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-            embedding_model = st.text_input("OpenAI Embedding Model", openai_embedding_model_str, key="openai_embedding_model_input")
+            embedding_model = st.text_input("OpenAI Embedding Model", openai_embedding_model_str, key="openai_embedding_model_input_embed")
         elif embedding_type == "Google":
             google_embedding_model_str = os.getenv("GOOGLE_EMBEDDING_MODEL", "models/embedding-001")
-            embedding_model = st.text_input("Google Embedding Model", google_embedding_model_str, key="google_embedding_model_input")
+            embedding_model = st.text_input("Google Embedding Model", google_embedding_model_str, key="google_embedding_model_input_embed")
+
+        # Retrieve batch size from state, fallback if type is wrong
+        indexing_batch_size_value = st.session_state.indexing_batch_size
+        if not isinstance(indexing_batch_size_value, (int, float)):
+             print(f"Warning: session state 'indexing_batch_size' has unexpected type {type(indexing_batch_size_value)}. Resetting to default 100.")
+             indexing_batch_size_value = 100
+
+        indexing_batch_size = st.slider(
+            "Indexing Batch Size",
+            min_value=10,
+            max_value=1000,
+            value=int(indexing_batch_size_value), # Ensure it's an integer for slider
+            step=10,
+            help="Number of chunks to embed and add to the database in a single batch. Lower values might reduce memory usage and API calls per batch, but increase total batches.",
+            key="indexing_batch_size_slider"
+        )
+        st.session_state.indexing_batch_size = indexing_batch_size
+
+        # Retrieve delay from state, fallback if type is wrong
+        batch_delay_seconds_value = st.session_state.batch_delay_seconds
+        if not isinstance(batch_delay_seconds_value, (int, float)):
+             print(f"Warning: session state 'batch_delay_seconds' has unexpected type {type(batch_delay_seconds_value)}. Resetting to default 1.0.")
+             batch_delay_seconds_value = 1.0
+
+        batch_delay_seconds = st.slider(
+            "Delay between Batches (seconds)",
+            min_value=0.0,
+            max_value=10.0,
+            value=float(batch_delay_seconds_value), # Ensure it's a float
+            step=0.1,
+            help="Time to wait between sending batches of chunks to the embedding model/adding to the index. Increase if hitting rate limits (e.g., Google's 429 error).",
+            key="batch_delay_seconds_slider"
+        )
+        st.session_state.batch_delay_seconds = batch_delay_seconds
 
 
-        # The path where FAISS saves its index and document store
-        db_path = os.path.join(docs_dir, "vectorstore") if docs_dir else None
-
-        st.markdown("**To perform a hard reset** you must manually delete the `vectorstore` and `metadata` subdirectories from the documents directory (`./docs` by default).")
+        st.markdown("**To perform a hard reset** you must manually delete the `vectorstore` and `metadata` subdirectories from the documents directory. Check the console for detailed error tracebacks if building/loading fails.")
 
         # Database operations button (moved to the bottom of this section)
         build_db_button = st.button("🔨 Create/Update Vector DB", key="build_db_button")
@@ -1258,7 +1448,7 @@ with st.sidebar:
     with st.expander("Pass Complete Documents to LLM", expanded=False): # Collapsed by default
         # Re-list available documents whenever docs_dir might have changed or on explicit DB build
         if docs_dir:
-            current_available_doc_basenames = list_source_document_basenames(docs_dir)
+            current_available_doc_basenames = list_source_documents(docs_dir)
 
             # Update session state list of available document *basenames*
             # Check if the set of available basenames has changed
@@ -1274,7 +1464,7 @@ with st.sidebar:
 
 
             st.session_state.use_complete_docs = st.checkbox(
-                "Use Complete Documents (Ignores Vector DB)",
+                "Use Complete Documents (Ignores Vector DB Retrieval)",
                 value=st.session_state.use_complete_docs,
                 help="If checked, the LLM will receive the full text of selected documents as context instead of using vector database retrieval. Select documents below.",
                 key="use_complete_docs_checkbox" # Unique key
@@ -1289,16 +1479,22 @@ with st.sidebar:
                     st.warning("🔴 Complete Documents mode active, no documents selected.")
             else:
                 # Check if FAISS directory exists to give better user feedback
-                faiss_db_path = os.path.join(docs_dir, "vectorstore") if docs_dir else None
-                faiss_db_exists_physically = faiss_db_path and os.path.exists(faiss_db_path)
+                # Use the db_path calculated outside this expander
+                faiss_index_file = os.path.join(db_path, "index.faiss") if db_path else None
+                faiss_pkl_file = os.path.join(db_path, "index.pkl") if db_path else None
+                faiss_db_exists_physically_and_complete = db_path and os.path.exists(db_path) and os.path.exists(faiss_index_file) and os.path.exists(faiss_pkl_file)
+                faiss_db_dir_exists = db_path and os.path.exists(db_path)
 
                 if st.session_state.vector_store:
                     st.info("🔵 Using Vector Database retrieval.")
-                elif faiss_db_exists_physically:
-                     # Directory exists, but session state vector_store is None -> means load failed
-                     st.warning(f"⚪ Vector DB directory found at `{faiss_db_path}`, but failed to load. Database might be corrupt or incompatible. Please manually delete the directory to rebuild.")
+                elif faiss_db_exists_physically_and_complete:
+                     # Directory and files exist, but vector_store is None -> means load failed
+                     st.warning(f"⚪ Vector DB directory found at `{db_path}`, but failed to load. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path)}' directory to force a rebuild.")
+                elif faiss_db_dir_exists:
+                     # Directory exists, but files are missing
+                     st.warning(f"⚪ Vector DB directory found at `{db_path}`, but required files (index.faiss, index.pkl) are missing. Database is incomplete. Please manually delete the directory to rebuild.")
                 else:
-                    st.warning(f"⚪ Vector Database mode is active, but no database found at `{faiss_db_path}`. Please build it.")
+                    st.warning(f"⚪ Vector Database mode is active, but no database found at `{db_path or './docs/vectorstore'}`. Please build it.")
 
 
             st.write("Select documents to use as context:")
@@ -1308,12 +1504,12 @@ with st.sidebar:
             with col_sel1:
                  if st.button("Select All", key="select_all_docs_button"):
                       st.session_state.selected_files = {name: True for name in st.session_state.available_docs}
-                      # st.rerun() # May need rerun here
+                      # st.rerun() # May need rerun here for immediate checkbox update visually
 
             with col_sel2:
                  if st.button("Select None", key="select_none_docs_button"):
                       st.session_state.selected_files = {name: False for name in st.session_state.available_docs}
-                      # st.rerun() # May need rerun here
+                      # st.rerun() # May need rerun here for immediate checkbox update visually
 
 
             # Display checkboxes for each document
@@ -1376,8 +1572,9 @@ with st.sidebar:
             num_chunks_kept = st.slider(
                 "Number of Chunks Kept After Reranking",
                 min_value=1,
-                max_value=st.session_state.k_value,  # Limit to the number of retrieved documents
-                value=st.session_state.num_chunks_kept, # Use session state default/current
+                # Limit max value to k_value, default to min(4, k_value)
+                max_value=st.session_state.k_value,
+                value=min(st.session_state.num_chunks_kept, st.session_state.k_value), # Ensure default is within bounds
                 step=1,
                 help="Number of chunks to keep after LLM reranking. Must be less than or equal to the number of retrieved documents (K)."
             )
@@ -1409,7 +1606,7 @@ with st.sidebar:
 
         # Model selection based on provider
         model_name = "" # Default placeholder
-        ollama_base_url = None # Default to None
+        ollama_base_url_llm = None # Base URL for the LLM itself
 
         if model_type == "Ollama":
             ollama_model_str = os.getenv("OLLAMA_MODEL", "llama3:latest,mistral:latest")
@@ -1419,7 +1616,7 @@ with st.sidebar:
                 index=0,
                  key="ollama_model_select" # Unique key
             )
-            ollama_base_url = st.text_input("Ollama Base URL", os.getenv("OLLAMA_END_POINT", "http://localhost:11434"), key="ollama_base_url_input")
+            ollama_base_url_llm = st.text_input("Ollama Base URL for LLM", os.getenv("OLLAMA_END_POINT", "http://localhost:11434"), key="ollama_base_url_input_llm")
         elif model_type == "OpenAI":
             openai_model_str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo,gpt-4o")
             model_name = st.selectbox(
@@ -1453,7 +1650,9 @@ with st.sidebar:
 
 # --- LLM Initialization (runs whenever settings change or on initial load) ---
 # LLM is needed for metadata extraction and chat
-current_llm_params = (model_type, model_name, ollama_base_url, st.session_state.temperature)
+# Embedding is needed for DB load/build
+current_llm_params = (model_type, model_name, ollama_base_url_llm, st.session_state.temperature)
+current_embedding_params = (embedding_type, embedding_model, ollama_base_url_embedding)
 
 # Check if LLM params have changed or if LLM isn't set yet
 # Also check if docs_dir is valid, as create_llm for metadata extraction is needed for DB build
@@ -1462,48 +1661,19 @@ if docs_dir and (st.session_state.current_llm_params != current_llm_params or st
     llm_instance = create_llm(
         model_type,
         model_name,
-        ollama_base_url if model_type == "Ollama" else None,
+        ollama_base_url_llm if model_type == "Ollama" else None,
         st.session_state.temperature
     )
+    st.session_state.llm = llm_instance # Update LLM instance in state
 
-    if llm_instance:
-        st.session_state.llm = llm_instance
-        # If Vector DB *is* loaded, and LLM was just initialized/changed, re-initialize the conversation chain
-        # Check if LLM instance itself is different, or just the params changed
-        # Only re-initialize if we are *not* in complete docs mode OR if LLM is truly None
-        if st.session_state.vector_store and not st.session_state.use_complete_docs and st.session_state.llm is not None: # Ensure LLM is valid before trying to re-init chain
-             # Re-initialize conversation chain with potentially new LLM and settings
-             st.sidebar.write("LLM settings changed or initialized, re-initializing conversation chain...")
-             conversation, llm, retriever = initialize_conversation(
-                 st.session_state.vector_store,
-                 model_type,
-                 model_name,
-                 st.session_state.k_value,
-                 ollama_base_url if model_type == "Ollama" else None,
-                 st.session_state.use_reranking,
-                 st.session_state.num_chunks_kept,
-                 st.session_state.temperature
-             )
-             st.session_state.conversation = conversation
-             # Use the LLM instance returned by initialize_conversation if successful, otherwise keep the one created just above
-             st.session_state.llm = llm if llm is not None else llm_instance
-             st.session_state.retriever = retriever
-             if st.session_state.conversation:
-                  st.sidebar.success("Conversation chain re-initialized.")
-             else:
-                  st.sidebar.error("Failed to re-initialize conversation chain.")
-
-    else:
-        st.session_state.llm = None
-        # If LLM fails to initialize, the conversation chain (if using LLM) will also fail/be unusable
-        st.session_state.conversation = None # Ensure conversation is reset if LLM fails
-        st.session_state.retriever = None # Retriever might still exist, but chain is broken.
-elif not docs_dir:
-     # If docs_dir is not valid, LLM cannot be initialized (as it's needed for metadata extraction during DB build)
-     st.session_state.llm = None
-     st.session_state.conversation = None
-     st.session_state.retriever = None
-# --- End LLM Initialization ---
+# Check if Embedding params have changed (needed for DB load/build)
+# Note: Embedding instance is created inside create_or_update_vector_store and load_vector_store
+# We don't need to store the embedding instance in session state globally.
+# We just need to track if the *parameters* have changed, which we do with current_embedding_params.
+if docs_dir and (st.session_state.current_embedding_params != current_embedding_params):
+     st.session_state.current_embedding_params = current_embedding_params
+     # No action needed here other than updating the state,
+     # create_embeddings will use these values when called during DB ops.
 
 
 # Handle database building/updating (placed outside sidebar but triggered by sidebar button)
@@ -1516,19 +1686,24 @@ if build_db_button:
     st.session_state.build_db_button_clicked = True # Mark button as clicked
 
 # Execute DB build/update logic only if button was clicked and it hasn't been processed yet in this session
+# This block runs only once per button click across reruns caused by the button
 if st.session_state.build_db_button_clicked:
-    st.session_state.build_db_button_clicked = False # Reset flag immediately
+    st.session_state.build_db_button_clicked = False # Reset flag immediately *before* the long operation
 
     if not docs_dir:
          st.error("Please specify a documents directory.")
     elif not embedding_model:
          st.error("Please specify an embedding model.")
-    elif model_type == "Ollama" and not ollama_base_url:
-         st.error("Please specify the Ollama Base URL.")
+    elif embedding_type == "Ollama" and not ollama_base_url_embedding:
+         st.error("Please specify the Ollama Base URL for embeddings.")
     elif not model_name:
          st.error("Please select or specify an LLM model name.")
-    elif st.session_state.llm is None:
+    elif model_type == "Ollama" and not ollama_base_url_llm:
+         st.error("Please specify the Ollama Base URL for the LLM.")
+    elif st.session_state.llm is None: # Check if LLM creation earlier failed
         st.error("LLM failed to initialize. Please check LLM settings before building the database (metadata extraction requires LLM).")
+    elif db_path is None: # Check if db_path could be determined from docs_dir
+         st.error("Invalid documents directory path. Cannot build database.")
     else:
         with st.spinner("Processing documents and updating vector database..."):
             vector_store = create_or_update_vector_store(
@@ -1538,98 +1713,111 @@ if st.session_state.build_db_button_clicked:
                 embedding_model,
                 model_type, # Pass model_type for metadata LLM
                 model_name, # Pass model_name for metadata LLM
-                ollama_base_url if model_type == "Ollama" else None,
-                st.session_state.temperature # Pass the current temperature
+                ollama_base_url_llm if model_type == "Ollama" else None, # Pass LLM URL for metadata LLM
+                ollama_base_url_embedding if embedding_type == "Ollama" else None, # Pass Embedding URL
+                st.session_state.temperature, # Pass the current temperature
+                st.session_state.indexing_batch_size, # Pass indexing batch size
+                st.session_state.batch_delay_seconds # Pass batch delay
             )
-            if vector_store:
-                st.session_state.vector_store = vector_store
-                # Initialize conversation with new/updated vector store and current settings
-                # This is important to reflect the new DB content and potentially changed settings
-                # Only initialize the vector DB chain if we are NOT in complete docs mode
-                if not st.session_state.use_complete_docs:
-                    # Re-initialize conversation chain with the new/updated vector_store
-                    conversation, llm, retriever = initialize_conversation(
-                        vector_store,
-                        model_type,
-                        model_name,
-                        st.session_state.k_value,
-                        ollama_base_url if model_type == "Ollama" else None,
-                        st.session_state.use_reranking,
-                        st.session_state.num_chunks_kept,
-                        st.session_state.temperature
-                    )
-                    st.session_state.conversation = conversation
-                    # Update the main session state LLM and retriever from the chain initialization
-                    st.session_state.llm = llm if llm is not None else st.session_state.llm # Use the LLM instance returned if successful
-                    st.session_state.retriever = retriever
-                    if st.session_state.conversation:
-                         st.sidebar.success("Conversation chain initialized with updated DB.")
-                    else:
-                         st.sidebar.error("Failed to initialize conversation chain after DB update.")
-                else:
-                     # If in complete docs mode, ensure the vector DB chain variables are None
-                     st.session_state.conversation = None
-                     st.session_state.retriever = None
-                     st.sidebar.write("Vector DB updated, but conversation chain is not initialized (Complete Documents mode active).")
+            # Update session state with the result of the build/update
+            st.session_state.vector_store = vector_store
+
+            # After attempting DB build/update, re-initialize conversation chain
+            # *if* a vector store is available AND we are NOT in complete docs mode.
+            # This ensures the chain uses the latest DB and settings.
+            if st.session_state.vector_store and not st.session_state.use_complete_docs and st.session_state.llm is not None:
+                 st.sidebar.write("DB build/update completed, re-initializing conversation chain...")
+                 conversation, llm, retriever = initialize_conversation(
+                     st.session_state.vector_store,
+                     model_type,
+                     model_name,
+                     st.session_state.k_value,
+                     ollama_base_url_llm if model_type == "Ollama" else None, # Pass LLM URL
+                     st.session_state.use_reranking,
+                     st.session_state.num_chunks_kept,
+                     st.session_state.temperature
+                 )
+                 st.session_state.conversation = conversation
+                 st.session_state.llm = llm if llm is not None else st.session_state.llm # Update LLM if init_conv succeeded
+                 st.session_state.retriever = retriever
+
+                 if st.session_state.conversation:
+                      st.sidebar.success("Conversation chain initialized with updated DB.")
+                 else:
+                      st.sidebar.error("Failed to initialize conversation chain after DB update.")
 
             else:
-                st.error("Failed to create or update vector database.")
-                # Ensure related states are None if DB operation fails
-                st.session_state.vector_store = None
-                st.session_state.conversation = None
-                st.session_state.retriever = None
-                # st.session_state.llm might still be set from the independent init block, which is fine
+                 # If no vector store, or in complete docs mode, ensure chain/retriever are None
+                 st.session_state.conversation = None
+                 st.session_state.retriever = None
+                 # st.session_state.llm might still be set from the independent init block, which is fine
+                 if st.session_state.use_complete_docs:
+                     st.sidebar.write("Vector DB process finished, but conversation chain is not initialized (Complete Documents mode active).")
+                 else:
+                      st.sidebar.write("Vector DB process finished, but no valid vector store is available to initialize the conversation chain.")
+
 
         # Rerun the script after DB operation to update the UI status and potentially chat eligibility
         st.rerun()
 
 
 # --- Initial Load Logic ---
-# This block runs on initial app load or after a reset if DB exists,
-# but ONLY if the vector_store and conversation are NOT already in session state AND
-# we are *not* in Complete Documents mode.
-# Also ensure required settings are available and LLM is initialized.
-if docs_dir and os.path.exists(docs_dir) and embedding_model and model_name and (model_type != "Ollama" or ollama_base_url) and st.session_state.llm is not None:
-    db_path = os.path.join(docs_dir, "vectorstore")
-    # Only attempt to load DB if the directory exists, and it's not already loaded, AND we are NOT using complete docs
-    if os.path.exists(db_path) and st.session_state.vector_store is None and not st.session_state.use_complete_docs:
-        # Attempt to load the DB if the directory exists and it's not already loaded
-        with st.spinner("Loading existing vector database..."):
-            vector_store = load_vector_store(
-                db_path,
-                embedding_type, # Use current selection
-                embedding_model, # Use current selection
-                ollama_base_url if model_type == "Ollama" else None # Use current selection
-            )
-            if vector_store:
-                st.session_state.vector_store = vector_store
-                # Initialize conversation with loaded vector store and current settings
-                conversation, llm, retriever = initialize_conversation(
-                    vector_store,
-                    model_type, # Use current selection
-                    model_name, # Use current selection
-                    st.session_state.k_value, # Use current selection
-                    ollama_base_url if model_type == "Ollama" else None, # Use current selection
-                    st.session_state.use_reranking, # Use current selection
-                    st.session_state.num_chunks_kept, # Use current selection
-                    st.session_state.temperature # Pass the current temperature
+# This block attempts to load an existing vector store and initialize the conversation
+# ONLY if it's not already loaded AND we are NOT in Complete Documents mode.
+# It also needs docs_dir, embedding settings, and LLM settings to be valid.
+# Note: This runs on initial load and any rerun where state might change, but is guarded
+# by checks for existing state (`st.session_state.vector_store is None`) and mode.
+if docs_dir and os.path.exists(docs_dir) and embedding_model and (embedding_type != "Ollama" or ollama_base_url_embedding) \
+   and model_name and (model_type != "Ollama" or ollama_base_url_llm) and st.session_state.llm is not None:
+
+    # Use the db_path calculated outside the expander
+    # Add check for db_path being None
+    if db_path:
+        faiss_index_file = os.path.join(db_path, "index.faiss")
+        faiss_pkl_file = os.path.join(db_path, "index.pkl")
+
+        # Only attempt to load DB if the directory and expected files exist, and it's not already loaded, AND we are NOT using complete docs
+        if os.path.exists(db_path) and os.path.exists(faiss_index_file) and os.path.exists(faiss_pkl_file) \
+           and st.session_state.vector_store is None and not st.session_state.use_complete_docs:
+
+            # Attempt to load the DB if the directory exists and it's not already loaded
+            with st.spinner("Loading existing vector database..."):
+                vector_store = load_vector_store(
+                    db_path,
+                    embedding_type, # Use current selection
+                    embedding_model, # Use current selection
+                    ollama_base_url_embedding if embedding_type == "Ollama" else None # Use current selection for embedding URL
                 )
-                st.session_state.conversation = conversation
-                # Update the main session state LLM and retriever from the chain initialization
-                st.session_state.llm = llm # Use the LLM instance returned by initialize_conversation
-                st.session_state.retriever = retriever
-                if st.session_state.conversation:
-                     st.success("Existing vector database loaded and conversation initialized!")
-                else:
-                    st.warning("Existing database loaded, but conversation chain could not be initialized. Check LLM settings.")
-            # If load_vector_store returned None, the error message is already displayed inside it.
-            # We do NOT reset st.session_state.vector_store here if it was None initially, as it might have
-            # been set by a failed build attempt. The crucial part is it stays None on load error.
+                st.session_state.vector_store = vector_store # Update state regardless of load success
+
+                if vector_store:
+                    # If load was successful, initialize conversation
+                    st.sidebar.write("Existing DB loaded, initializing conversation chain...")
+                    conversation, llm, retriever = initialize_conversation(
+                        vector_store,
+                        model_type, # Use current selection
+                        model_name, # Use current selection
+                        st.session_state.k_value, # Use current selection
+                        ollama_base_url_llm if model_type == "Ollama" else None, # Use current selection for LLM URL
+                        st.session_state.use_reranking, # Use current selection
+                        st.session_state.num_chunks_kept, # Use current selection
+                        st.session_state.temperature # Pass the current temperature
+                    )
+                    st.session_state.conversation = conversation
+                    st.session_state.llm = llm if llm is not None else st.session_state.llm # Update LLM if init_conv succeeded
+                    st.session_state.retriever = retriever
+
+                    if st.session_state.conversation:
+                         st.success("Existing vector database loaded and conversation initialized!")
+                    else:
+                        st.warning("Existing database loaded, but conversation chain could not be initialized. Check LLM settings.")
+                # If load_vector_store returned None, the error message is already displayed inside it.
+    # If db_path is None, we don't attempt to load, which is correct.
 
 
 # Update available docs list on initial load or rerun if docs_dir is set
 if docs_dir:
-     current_available_doc_basenames = list_source_document_basenames(docs_dir)
+     current_available_doc_basenames = list_source_documents(docs_dir)
      if set(st.session_state.available_docs) != set(current_available_doc_basenames):
           st.session_state.available_docs = sorted(current_available_doc_basenames) # Keep sorted
           # Reset selection state for any removed files, add new ones (default False)
@@ -1643,8 +1831,6 @@ if docs_dir:
      for name in st.session_state.available_docs:
           current_selected_files[name] = st.session_state.selected_files.get(name, False)
      st.session_state.selected_files = current_selected_files
-
-# --- End Initial Load Logic ---
 
 
 # --- Chat Eligibility Check ---
@@ -1677,7 +1863,8 @@ if chat_eligible:
             if not selected_basenames or not docs_dir:
                  response_content = "Complete Documents mode is active, but no documents are selected or documents directory is invalid. Please check settings in the sidebar."
                  st.warning(response_content)
-                 st.chat_message("assistant", avatar="🤖").markdown(response_content)
+                 with st.chat_message("assistant", avatar="🤖"):
+                     st.markdown(response_content)
                  st.session_state.chat_history.append({"role": "assistant", "content": response_content})
             else:
                 with st.spinner(f"Processing selected documents ({len(selected_basenames)}) and generating response..."):
@@ -1689,6 +1876,9 @@ if chat_eligible:
                         concatenated_content = ""
                         st.sidebar.write(f"Loading content from {len(selected_paths)} selected documents for context...")
                         loaded_document_contents = []
+                        total_chars = 0
+                        char_limit = 500000 # Approximate token limit avoidance for direct context
+
                         for doc_path in selected_paths:
                              loader = get_document_loader(doc_path)
                              if loader:
@@ -1696,21 +1886,39 @@ if chat_eligible:
                                       # Load ALL content from the document using the loader
                                       documents = loader.load() # Loader might return list of pages/docs
                                       # Concatenate content from all parts of this document
-                                      full_text = "\n\n".join([d.page_content for d in documents])
-                                      # Add source information and the full text for this document
-                                      # Use basename here for simpler display in the prompt context
-                                      loaded_document_contents.append(f"--- Start Document: {os.path.basename(doc_path)} ---\n\n{full_text}\n\n--- End Document: {os.path.basename(doc_path)} ---")
-                                      st.sidebar.write(f"- Loaded content from {os.path.basename(doc_path)}")
+                                      full_text = "\n\n".join([str(d.page_content) for d in documents]) # Ensure string conversion
+                                      # Check if adding this document exceeds char limit
+                                      if total_chars + len(full_text) > char_limit:
+                                           st.sidebar.warning(f"Content from {os.path.basename(doc_path)} exceeds approximate character limit ({char_limit}). Truncating context.")
+                                           # Add part of the document that fits
+                                           remaining_chars = char_limit - total_chars
+                                           if remaining_chars > 0:
+                                                loaded_document_contents.append(f"--- Start Document: {os.path.basename(doc_path)} ---\n\n{full_text[:remaining_chars]}\n\n--- End Document: {os.path.basename(doc_path)} ---")
+                                                total_chars += remaining_chars
+                                           # Stop loading more documents
+                                           break
+                                      else:
+                                          # Add source information and the full text for this document
+                                          # Use basename here for simpler display in the prompt context
+                                          loaded_document_contents.append(f"--- Start Document: {os.path.basename(doc_path)} ---\n\n{full_text}\n\n--- End Document: {os.path.basename(doc_path)} ---")
+                                          total_chars += len(full_text)
+                                          st.sidebar.write(f"- Loaded content from {os.path.basename(doc_path)} ({len(full_text)} chars)")
+
+
                                   except Exception as e:
                                       st.sidebar.warning(f"Error loading content from {os.path.basename(doc_path)}: {e}. Skipping.")
+                                      print(f"\n--- Error loading content for Complete Docs mode from: {doc_path} ---\n")
+                                      traceback.print_exc() # Print traceback to console
+                                      print("\n---------------------------------------------\n")
                              else:
                                  st.sidebar.warning(f"Unsupported file type for loading complete content: {os.path.basename(doc_path)}. Skipping.")
 
-                        # Join content from all successfully loaded documents
+                        # Join content from all successfully loaded documents (or truncated parts)
                         concatenated_content = "\n\n".join(loaded_document_contents)
 
                         if not concatenated_content.strip():
                              response_content = "Could not load readable content from selected documents."
+                             st.warning(response_content)
                         else:
                             # Construct the manual prompt for Complete Documents mode
                             # NOTE: In this mode, chat history is *not* included in the prompt
@@ -1741,7 +1949,7 @@ if chat_eligible:
                                      st.warning("Chain of Thought is not supported in 'Complete Documents' mode. Using direct query.")
 
                                 response = st.session_state.llm.invoke(manual_prompt)
-                                response_content = response.content
+                                response_content = str(response.content) # Ensure string conversion
                             else:
                                 response_content = "LLM is not initialized. Cannot answer in Complete Documents mode."
                                 st.error(response_content)
@@ -1755,11 +1963,14 @@ if chat_eligible:
                         st.session_state.chat_history.append({"role": "assistant", "content": response_content})
 
                     except Exception as e:
-                        st.error(f"An unexpected error occurred in Complete Documents mode: {e}")
+                        st.error(f"An unexpected error occurred in Complete Documents mode: {e}. Check console for traceback.")
+                        error_message = "Sorry, I encountered an error while processing your request."
                         with st.chat_message("assistant", avatar="🤖"):
-                             st.markdown("Sorry, an error occurred while processing the documents.")
-                        import traceback
-                        print(traceback.format_exc())
+                             st.markdown(error_message)
+                        st.session_state.chat_history.append({"role": "assistant", "content": error_message}) # Add error message to history
+                        print(f"\n--- Unexpected error in Complete Documents mode ---\n")
+                        traceback.print_exc() # Print traceback to console
+                        print("\n---------------------------------------------\n")
 
 
         elif st.session_state.conversation:
@@ -1768,24 +1979,29 @@ if chat_eligible:
             with st.spinner("Thinking..."):
                 try:
                     # Prepare chat history for the chain
+                    # Ensure correct format for Langchain's ConversationalRetrievalChain memory
                     langchain_history = []
-                    # Iterate in steps of 2 (user, assistant pairs)
-                    # Exclude the current user message we just added
-                    history_for_chain = st.session_state.chat_history[:-1] if len(st.session_state.chat_history) > 0 else []
+                    # Only include previous user/assistant turns (skip the current user prompt)
+                    history_for_chain = st.session_state.chat_history[:-1] if st.session_state.chat_history else []
 
-                    for i in range(0, len(history_for_chain), 2):
-                         if i + 1 < len(history_for_chain): # Ensure there's a pair
-                            user_msg = history_for_chain[i]
-                            ai_msg = history_for_chain[i+1]
-                            if user_msg['role'] == 'user' and ai_msg['role'] == 'assistant':
-                                langchain_history.append((user_msg['content'], ai_msg['content']))
-                            # Handle cases where roles might be mismatched - maybe skip or log warning
+                    # Ensure history is in pairs (user, assistant)
+                    # Only take complete pairs
+                    for i in range(0, len(history_for_chain) -1, 2): # Go up to second-to-last item, step by 2
+                        user_msg = history_for_chain[i]
+                        ai_msg = history_for_chain[i+1]
+                        if user_msg['role'] == 'user' and ai_msg['role'] == 'assistant':
+                            langchain_history.append((user_msg['content'], ai_msg['content']))
+                        else:
+                             # Log or handle potential mismatch if necessary
+                             print(f"Warning: Chat history mismatch at index {i}")
 
-                    # Execute query - check if retriever is also initialized (should be if conversation is)
+
+                    # Execute query - check if retriever and llm are initialized (should be if conversation is)
                     if not st.session_state.retriever or not st.session_state.llm:
                          # This case should be caught by chat_eligible, but defensive check
-                         response = {"answer": "Vector DB mode is active, but the required components (LLM/Retriever) are not initialized. Please rebuild/load the DB."}
-                         st.warning(response["answer"])
+                         response_content = "Vector DB mode is active, but the required components (LLM/Retriever) are not initialized. Please rebuild/load the DB."
+                         response = {"answer": response_content} # Use a dict structure
+                         st.warning(response_content)
                     elif use_cot and st.session_state.llm and st.session_state.retriever:
                          # Use Chain of Thought if selected and LLM/Retriever are available
                          # CoT logic handles retrieval internally using the passed retriever
@@ -1796,14 +2012,15 @@ if chat_eligible:
                          )
                          response = {"answer": answer} # CoT returns the final answer directly
 
-
                     else:
                          # Regular conversation flow using the chain
+                         # The chain itself handles retrieval based on the retriever object
                          response = st.session_state.conversation.invoke({"question": prompt, "chat_history": langchain_history})
                          # If using ConversationalRetrievalChain, the 'answer' key holds the response.
 
 
-                    answer = response["answer"] # Access the answer from the response dictionary
+                    answer = str(response.get("answer", "Sorry, I could not generate an answer.")) # Ensure string, fallback
+
 
                     # Display assistant response
                     with st.chat_message("assistant", avatar="🤖"):
@@ -1813,11 +2030,14 @@ if chat_eligible:
                     st.session_state.chat_history.append({"role": "assistant", "content": answer})
 
                 except Exception as e:
-                    st.error(f"An error occurred during the conversation (Vector DB mode): {e}")
+                    st.error(f"An error occurred during the conversation (Vector DB mode): {e}. Check console for traceback.")
+                    error_message = "Sorry, I encountered an error while processing your request."
                     with st.chat_message("assistant", avatar="🤖"):
-                        st.markdown("Sorry, I encountered an error while processing your request.")
-                    import traceback
-                    print(traceback.format_exc())
+                        st.markdown(error_message)
+                    st.session_state.chat_history.append({"role": "assistant", "content": error_message}) # Add error message to history
+                    print(f"\n--- Error during conversation (Vector DB mode) ---\n")
+                    traceback.print_exc() # Print traceback to console
+                    print("\n---------------------------------------------\n")
 
 
 else:
@@ -1830,16 +2050,30 @@ else:
     elif st.session_state.use_complete_docs and sum(st.session_state.selected_files.values()) == 0:
           st.warning("Complete Documents mode is enabled, but no documents are selected. Please select documents in the sidebar.")
     else: # This covers cases where LLM is ready, but vector DB chain isn't AND Complete Docs isn't ready
-         db_path_display = os.path.join(docs_dir or "your_docs_dir", "vectorstore") if docs_dir else "./docs/vectorstore"
-         faiss_db_path = os.path.join(docs_dir, "vectorstore") if docs_dir else None
-         faiss_db_exists_physically = faiss_db_path and os.path.exists(faiss_db_path)
+         # Use the db_path calculated outside the expander
+         db_path_display = db_path or "./docs/vectorstore"
+         # Add check for db_path being None before using os.path.join
+         if db_path:
+             faiss_index_file = os.path.join(db_path, "index.faiss")
+             faiss_pkl_file = os.path.join(db_path, "index.pkl")
+             faiss_db_exists_physically_and_complete = os.path.exists(db_path) and os.path.exists(faiss_index_file) and os.path.exists(faiss_pkl_file)
+             faiss_db_dir_exists = os.path.exists(db_path)
+         else:
+              # If db_path is None, none of the files or directory exist
+              faiss_db_exists_physically_and_complete = False
+              faiss_db_dir_exists = False
 
-         if st.session_state.vector_store is None and faiss_db_exists_physically:
-             st.warning(f"Vector database directory found at `{db_path_display}`, but failed to load. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path_display)}' directory to force a rebuild.")
-         elif st.session_state.vector_store is None and not faiss_db_exists_physically:
+
+         if st.session_state.vector_store is None and faiss_db_exists_physically_and_complete:
+             st.warning(f"Vector database directory found at `{db_path_display}` with files, but failed to load. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path_display)}' directory to force a rebuild.")
+         elif st.session_state.vector_store is None and faiss_db_dir_exists and not faiss_db_exists_physically_and_complete:
+              st.warning(f"Vector database directory found at `{db_path_display}`, but required files (index.faiss, index.pkl) are missing. Database is incomplete. Please manually delete the '{os.path.basename(db_path_display)}' directory to force a rebuild.")
+         elif st.session_state.vector_store is None and not faiss_db_dir_exists:
              st.warning(f"Vector database is not loaded or initialized. Please configure settings in the sidebar and click 'Create Vector DB' to build or load the database at `{db_path_display}`.")
              if docs_dir and not os.path.exists(docs_dir):
                   st.info(f"Documents directory `{docs_dir}` not found or not specified. Please create the directory or enter a valid path in the sidebar.")
+             elif docs_dir and os.path.exists(docs_dir) and not list_source_documents(docs_dir):
+                 st.info(f"Documents directory `{docs_dir}` exists, but contains no supported document files. Please add documents.")
          elif st.session_state.vector_store and st.session_state.conversation is None and not st.session_state.use_complete_docs:
             st.warning("Vector database loaded, but conversation chain failed to initialize. Please check LLM settings (Provider, Model, API Keys/Endpoints) and click 'Create Vector DB' to re-initialize the chain.")
          elif st.session_state.vector_store and st.session_state.use_complete_docs:
@@ -1855,6 +2089,7 @@ st.markdown("---") # Separator before buttons
 
 # Only show buttons if LLM is initialized, as reset might re-initialize conversation
 # and export needs history which relies on LLM being available to generate.
+# Export also needs chat history to exist.
 if st.session_state.llm is not None:
     col1, col2 = st.columns(2) # Use columns for horizontal layout
 
@@ -1863,26 +2098,26 @@ if st.session_state.llm is not None:
         reset_chat = st.button("🔄 Reset Chat History")
         if reset_chat:
             st.session_state.chat_history = []
-            # If vector store exists, re-initialize the conversation chain
+            # If vector store exists and we are in vector DB mode, re-initialize the conversation chain
             # This ensures memory is cleared but the chain is ready if DB is loaded.
             st.sidebar.write("Resetting chat history.")
             # Only re-initialize the vector DB chain if the vector store is actually loaded AND
             # we are NOT in complete docs mode.
-            if st.session_state.vector_store and not st.session_state.use_complete_docs:
+            if st.session_state.vector_store and not st.session_state.use_complete_docs and st.session_state.llm is not None:
                 st.sidebar.write("Vector DB loaded and mode is active, re-initializing conversation chain...")
                 conversation, llm, retriever = initialize_conversation(
                     st.session_state.vector_store,
                     model_type, # Use current selection
                     model_name, # Use current selection
                     st.session_state.k_value, # Use current selection
-                    ollama_base_url if model_type == "Ollama" else None, # Use current selection
+                    ollama_base_url_llm if model_type == "Ollama" else None, # Use current selection for LLM URL
                     st.session_state.use_reranking, # Use current selection
                     st.session_state.num_chunks_kept, # Use current selection
                     st.session_state.temperature # Pass the current temperature
                 )
                 st.session_state.conversation = conversation
                  # Update the main session state LLM and retriever from the chain initialization
-                st.session_state.llm = llm # Use the LLM instance returned by initialize_conversation
+                st.session_state.llm = llm if llm is not None else st.session_state.llm # Use the LLM instance returned by initialize_conversation
                 st.session_state.retriever = retriever
                 if st.session_state.conversation:
                      st.sidebar.success("Conversation chain re-initialized after reset.")
@@ -1893,17 +2128,18 @@ if st.session_state.llm is not None:
                  st.session_state.conversation = None
                  st.session_state.retriever = None
                  # st.session_state.llm remains from the independent init block
-
             st.rerun() # Rerun the script to clear chat display
-
 
     with col2:
         # Add Quarto export button
-        if st.button("📥 Download Chat as Quarto (.qmd)"):
-            if st.session_state.chat_history:
+        # Only show if there is chat history
+        if st.session_state.chat_history:
+             if st.button("📥 Download Chat as Quarto (.qmd)"):
                 qmd_content = convert_chat_to_qmd(st.session_state.chat_history)
                 # Display the download link directly after the button click
                 st.markdown(get_download_link(qmd_content), unsafe_allow_html=True)
-            else:
-                st.warning("No chat history to export yet.")
+        else:
+            # Show a disabled button or placeholder if no history
+             st.button("📥 Download Chat as Quarto (.qmd)", disabled=True, help="No chat history to export yet.")
+
 # --- End Chat Bottom Buttons ---
