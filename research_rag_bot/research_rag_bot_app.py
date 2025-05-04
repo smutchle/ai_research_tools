@@ -1,3 +1,4 @@
+
 import streamlit as st
 import os
 from dotenv import load_dotenv
@@ -7,10 +8,14 @@ import base64
 import glob # Import glob for file listing
 import time
 import shutil
-import chromadb
-from chromadb.config import Settings
-from chromadb.errors import InvalidCollectionException # Import specific exception
+# Remove chromadb imports
+# import chromadb
+# from chromadb.config import Settings
+# from chromadb.errors import InvalidCollectionException # Import specific exception
 import pandas as pd
+
+# Import FAISS instead of Chroma
+from langchain_community.vectorstores import FAISS
 
 from langchain_community.document_loaders import (
     DirectoryLoader,
@@ -24,7 +29,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_chroma import Chroma
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -48,77 +52,67 @@ st.set_page_config(
 # Load environment variables from .env file
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 
+# --- Helper Functions (mostly unchanged, except metadata uses LLM) ---
+
 def extract_document_metadata(document_path, llm):
     """
     Extract metadata from a document using the LLM.
     Attempts to identify type (academic paper, code, data, etc.) and extract relevant fields.
     Returns a dictionary with metadata.
+    This function is independent of the vector store type (Chroma/FAISS).
     """
     try:
         # Read the document content - limit to first few pages/lines for efficiency
         content_preview = ""
-        if document_path.lower().endswith('.pdf'):
-            loader = PyPDFLoader(document_path)
-            # Load only the first few pages for efficiency in metadata extraction
-            # Handle potential errors during loading
+        # Define a dictionary to map extensions to loaders and preview logic
+        loader_map = {
+            '.pdf': (PyPDFLoader, lambda loader: " ".join([p.page_content for p in loader.load()[:5]]) if loader.load() else ""),
+            '.txt': (TextLoader, lambda loader: loader.load()[0].page_content),
+            '.md': (TextLoader, lambda loader: loader.load()[0].page_content),
+            '.qmd': (TextLoader, lambda loader: loader.load()[0].page_content),
+            '.ipynb': (NotebookLoader, lambda loader: loader.load()[0].page_content),
+            '.csv': (CSVLoader, lambda loader: loader.load()[0].page_content if loader.load() else ""), # CSVLoader loads rows as docs
+            '.json': (JSONLoader, lambda loader: str(loader.load()[0].page_content) if loader.load() else ""), # JSONLoader loads as dict/list
+            '.jsonl': (JSONLoader, lambda loader: str(loader.load()[0].page_content) if loader.load() else ""), # Assuming jq_schema handles it
+        }
+
+        ext = os.path.splitext(document_path)[1].lower()
+
+        if ext in loader_map:
+            loader_class, preview_logic = loader_map[ext]
             try:
-                doc_pages = loader.load()
-                if not doc_pages:
-                     print(f"Error loading content from {document_path}")
-                     content_preview = "Could not load document content."
+                # Handle potential issues with JSONLoader and other loaders returning empty lists
+                if loader_class == JSONLoader:
+                     # JSONLoader requires jq_schema, use a basic one for preview
+                     # Ensure text_content=False for loading actual JSON structure
+                     loader = JSONLoader(file_path=document_path, jq_schema=".", text_content=False) # Load as dict/list
+                     # Attempt to get text content from first loaded item
+                     documents = loader.load()
+                     if documents:
+                         # Try converting page_content (which might be a dict/list) to string
+                         content_preview = str(documents[0].page_content)[:10000]
+                     else:
+                         print(f"Error loading content from {document_path}")
+                         content_preview = "Could not load document content."
                 else:
-                    # Use first 5 pages or first 10000 characters, whichever is smaller
-                    preview_text = " ".join([p.page_content for p in doc_pages[:5]])
-                    content_preview = preview_text[:10000]
+                     loader = loader_class(document_path)
+                     content_preview = preview_logic(loader)[:10000] # Apply logic and limit size
+
+                if not content_preview.strip():
+                     print(f"Warning: Loaded content preview for {document_path} is empty.")
+                     content_preview = "Document content preview could not be generated."
+
             except Exception as e:
-                 print(f"Error loading PDF content from {document_path}: {e}")
-                 content_preview = "Could not load PDF document content due to error."
+                 print(f"Error loading/processing content from {document_path} for preview: {e}")
+                 content_preview = f"Could not load document content due to error: {e}"
 
-        elif document_path.lower().endswith(('.txt', '.md', '.qmd')):
-             loader = TextLoader(document_path)
-             try:
-                doc = loader.load()[0]
-                content_preview = doc.page_content[:10000] # Limit preview size
-             except Exception as e:
-                 print(f"Error loading text content from {document_path}: {e}")
-                 content_preview = "Could not load text document content due to error."
-
-        elif document_path.lower().endswith('.ipynb'):
-             loader = NotebookLoader(document_path)
-             try:
-                 doc = loader.load()[0]
-                 content_preview = doc.page_content[:10000] # Limit preview size
-             except Exception as e:
-                 print(f"Error loading notebook content from {document_path}: {e}")
-                 content_preview = "Could not load notebook document content due to error."
-
-        elif document_path.lower().endswith('.csv'):
-             loader = CSVLoader(document_path)
-             try:
-                 # Load first row or a small sample - CSVLoader loads rows as separate docs
-                 doc = loader.load()[0] # Load the first row/document
-                 content_preview = doc.page_content[:10000] # Limit preview size
-             except Exception as e:
-                 print(f"Error loading CSV content from {document_path}: {e}")
-                 content_preview = "Could not load CSV document content due to error."
-
-        elif document_path.lower().endswith(('.json', '.jsonl')):
-             # Assuming JSONLoader provides usable text content from a record
-             # Note: This assumes a structure JSONLoader can handle easily,
-             # and loading [0] might not be representative for all JSONL
-             loader = JSONLoader(file_path=document_path, jq_schema=".", text_content=False) # Load as dict/list
-             try:
-                 doc = loader.load()[0]
-                 # Convert dict/list to string for preview, handle potential errors
-                 content_preview = str(doc.page_content)[:10000] # Limit preview size
-             except Exception as e:
-                 print(f"Error loading/converting JSON content for preview {document_path}: {e}")
-                 content_preview = "Could not load or process JSON content for preview."
         else:
              print(f"Unsupported file type for metadata extraction preview: {document_path}")
-             content_preview = "Unsupported file type."
+             content_preview = "Unsupported file type for content preview."
+
 
         # Create prompt for metadata extraction
+        # The prompt remains the same as it describes the task for the LLM
         prompt = f"""
         Analyze the following document content preview to determine its type (e.g., Academic Paper, Report, Code, Data, General Text, Image Description, etc.).
         Then, extract relevant metadata based on the detected type.
@@ -184,7 +178,7 @@ def extract_document_metadata(document_path, llm):
                  st.warning(f"LLM response for {os.path.basename(document_path)} was not a JSON object. Using defaults.")
                  metadata = {} # Use empty dict if not a dict
 
-            # Ensure required keys exist with default "N/A" if missing
+            # Ensure required keys exist with default "N/A" if missing or empty
             required_keys = ["file_type_detected", "author", "title", "year", "journal", "apa_reference", "abstract", "description"]
             for key in required_keys:
                 if key not in metadata or not metadata[key]: # Also check for empty strings
@@ -245,6 +239,7 @@ def extract_document_metadata(document_path, llm):
 def save_metadata_json(metadata, source_path, metadata_dir):
     """
     Save metadata to a JSON file in the metadata directory with the same basename as the source.
+    This function is independent of the vector store type (Chroma/FAISS).
     """
     # Create metadata directory if it doesn't exist
     os.makedirs(metadata_dir, exist_ok=True)
@@ -267,6 +262,7 @@ def load_metadata_json(source_path, metadata_dir):
      """
      Load metadata from a JSON file in the metadata directory.
      Returns metadata dict or None if file doesn't exist or is invalid.
+     This function is independent of the vector store type (Chroma/FAISS).
      """
      base_name = os.path.splitext(os.path.basename(source_path))[0]
      json_path = os.path.join(metadata_dir, f"{base_name}.json")
@@ -294,6 +290,7 @@ def prepend_reference_to_chunks(chunks, metadata):
     """
     Prepend relevant context information (APA reference, title, or description)
     to each chunk from the document's metadata.
+    This function is independent of the vector store type (Chroma/FAISS).
     """
     context_info = ""
     if metadata.get('apa_reference', 'N/A') != "N/A":
@@ -303,6 +300,7 @@ def prepend_reference_to_chunks(chunks, metadata):
     elif metadata.get('description', 'N/A') != "N/A":
          context_info = f"Document Description: {metadata['description']}"
     elif metadata.get('source'):
+         # Get just the basename for the reference in the chunk
          context_info = f"Source File: {os.path.basename(metadata['source'])}"
     else:
         context_info = "Source: Unknown Document"
@@ -312,6 +310,9 @@ def prepend_reference_to_chunks(chunks, metadata):
         # Add the context info at the beginning of each chunk's page_content
         # Using a clear separator
         for chunk in chunks:
+            # Ensure metadata source is updated to just basename for cleaner display if needed later
+            # Although the original source path is also useful for lookup. Let's keep original source path
+            # in metadata['source'] and only use basename for the *prepended text*.
             chunk.page_content = f"{context_info}\n\n---\n\n{chunk.page_content}"
 
     return chunks
@@ -320,12 +321,6 @@ def split_csv(csv_string):
     """
     Split a comma-separated string into a list of strings.
     Works for single values as well.
-
-    Args:
-        csv_string (str): A comma-separated string
-
-    Returns:
-        list: List of individual string values
     """
     if not csv_string:
         return []
@@ -371,6 +366,8 @@ def create_embeddings(embedding_type, embedding_model, ollama_base_url=None):
         return None
 
 
+# --- FAISS Specific Functions ---
+
 def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_model, model_type, model_name, ollama_base_url=None, llm_temperature=0.2):
     st.sidebar.write("---")
     st.sidebar.write("🛠️ Create Vector DB button pressed...")
@@ -399,70 +396,38 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
          st.session_state.selected_files = {name: st.session_state.selected_files.get(name, False) for name in st.session_state.available_docs}
          return None
 
-    collection_name = "knowledge_docs"
     vector_store = None
-    db_needs_full_recreate = False # Flag if we need to start from scratch
+    db_exists_logically = False # Flag indicating if we successfully *loaded* an existing DB
 
-    # --- Determine if we need to create a new DB or load existing ---
+    # --- Attempt to Load Existing FAISS DB ---
+    # Check if the directory *physically* exists first
     if os.path.exists(db_path):
-        st.sidebar.write(f"Database directory found at '{db_path}'. Attempting to load existing DB.")
+        st.sidebar.write(f"Database directory found at '{db_path}'. Attempting to load existing FAISS index.")
         try:
-            # Attempt to load the existing database
-            client = chromadb.PersistentClient(
-                path=db_path,
-                settings=Settings(anonymized_telemetry=False, allow_reset=True)
-            )
-            # Check if the collection exists *before* creating the Chroma instance
-            # This helps differentiate between a missing collection vs other errors
+            # Attempt to load the existing FAISS index
+            # Setting allow_dangerous_deserialization=True as required by recent library versions
+            loaded_faiss = FAISS.load_local(db_path, embeddings, allow_dangerous_deserialization=True)
+
+            vector_store = loaded_faiss # Successfully loaded!
+            st.sidebar.write(f"Existing FAISS index loaded from '{db_path}'.")
+            db_exists_logically = True
             try:
-                 collection = client.get_collection(collection_name)
-                 # If get_collection succeeds, the DB and collection exist and are loadable
-                 vector_store = Chroma(
-                    persist_directory=db_path,
-                    embedding_function=embeddings, # Ensure we use the current embeddings
-                    client=client,
-                    collection_name=collection_name
-                )
-                 st.sidebar.write(f"Existing database collection '{collection_name}' loaded.")
-                 db_exists = True
-                 try:
-                     count = collection.count()
-                     st.sidebar.write(f"Collection contains {count} existing items.")
-                 except Exception as e:
-                     st.warning(f"Could not retrieve count from existing collection: {e}")
-
-            except InvalidCollectionException:
-                 # Directory exists, but collection doesn't -> recreate
-                 st.sidebar.warning(f"Database directory exists at '{db_path}', but collection '{collection_name}' not found. Will create a new database.")
-                 db_exists = False
-                 db_needs_full_recreate = True
-                 # No need to clean directory here, Chroma.from_documents will create the collection
-
+                # FAISS doesn't have a simple count(). docstore stores documents.
+                # This count is an approximation based on the internal structure and might not be exact or stable.
+                # A simpler check might just be len(vector_store.index) if the index is guaranteed non-empty.
+                # Relying on the successful load is often sufficient.
+                 st.sidebar.write(f"Index loaded. Ready for search.") # Removed count for stability
             except Exception as e:
-                # Any other error during client init or get_collection attempt -> recreate
-                st.sidebar.warning(f"Error loading existing database at '{db_path}': {e}. Will create a new database.")
-                db_exists = False
-                db_needs_full_recreate = True
-                st.sidebar.warning(f"Cleaning up potentially conflicting directory: {db_path}")
-                shutil.rmtree(db_path, ignore_errors=True) # Clean up anything in the directory
-                os.makedirs(db_path, exist_ok=True) # Recreate the empty directory
+                # This catch block might not be needed if the load was successful, but keep for safety
+                st.sidebar.warning(f"Could not perform post-load check on index: {e}")
 
 
         except Exception as e:
-            # Errors even before getting collection (e.g., client init fails) -> recreate
-            st.sidebar.warning(f"Error initializing Chroma client for '{db_path}': {e}. Will create a new database.")
-            db_exists = False
-            db_needs_full_recreate = True
-            st.sidebar.warning(f"Cleaning up potentially conflicting directory: {db_path}")
-            shutil.rmtree(db_path, ignore_errors=True) # Clean up anything in the directory
-            os.makedirs(db_path, exist_ok=True) # Recreate the empty directory
-
-    else:
-        # db_path directory does not exist, definitely create new
-        st.sidebar.write(f"Database directory not found at '{db_path}'. Will create a new database.")
-        db_exists = False
-        db_needs_full_recreate = True
-        os.makedirs(db_path, exist_ok=True) # Create directory for the first time
+            # Any error during load -> Treat as non-existent or corrupt for this run
+            # IMPORTANT: Do NOT delete the directory here based on the requirement.
+            st.error(f"Error loading existing database at '{db_path}': {e}. Database might be corrupt, incompatible, or missing files. Please manually delete the '{os.path.basename(db_path)}' directory to force a rebuild.")
+            st.sidebar.warning(f"Error loading FAISS index: {e}. Cannot load existing DB.")
+            db_exists_logically = False # Loading failed
 
 
     # --- Identify documents to process ---
@@ -471,13 +436,32 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
 
     docs_to_add_paths = [] # Paths of documents that need to be added
 
-    if db_needs_full_recreate:
-        # If recreating, all documents need to be processed and added
-        st.sidebar.write("Adding all documents for a full database recreation.")
+    # Determine which documents need processing (either for new build or incremental update)
+    documents_requiring_metadata_check = all_source_files # We need to check metadata for all source files
+
+    # If we successfully loaded an existing DB, only process files without metadata
+    if db_exists_logically:
+         st.sidebar.write("Checking documents for incremental update...")
+         files_without_metadata = []
+         for source_path in all_source_files:
+             base_name = os.path.splitext(os.path.basename(source_path))[0]
+             json_path = os.path.join(metadata_dir, f"{base_name}.json")
+             if os.path.exists(json_path):
+                 # Document metadata exists, assume it was processed in a prior run
+                 st.sidebar.write(f"⏭️ Skipping {os.path.basename(source_path)}: Metadata exists.")
+             else:
+                 # Metadata does not exist, this document needs to be added
+                 st.sidebar.write(f"✅ Marking {os.path.basename(source_path)} for addition (Missing metadata).")
+                 files_without_metadata.append(source_path)
+         docs_to_add_paths = files_without_metadata
+         # In incremental update mode, we don't clean metadata files for existing docs.
+
+    else: # db_exists_logically is False (either directory didn't exist or load failed)
+        # If we couldn't load the DB, or it didn't exist physically, process ALL source files for a fresh start
+        st.sidebar.write("Full database creation/recreation required.")
         docs_to_add_paths = all_source_files
-        # Also clean up existing metadata files if doing a full recreate
-        st.sidebar.write("Cleaning up existing metadata files for full recreate...")
-        # List files directly in metadata_dir
+        # Clean up *all* existing metadata files if we are doing a full rebuild due to load failure or initial build
+        st.sidebar.write("Cleaning up existing metadata files for full rebuild/initial creation...")
         metadata_files = glob.glob(os.path.join(metadata_dir, "*.json"))
         if metadata_files:
             for metadata_file in metadata_files:
@@ -490,33 +474,18 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
              st.sidebar.write("- No existing metadata files found to clean.")
 
 
-    else: # db_exists is True, attempt incremental update
-        st.sidebar.write("Attempting incremental update to existing database.")
-        # Determine which documents need adding (those without metadata files)
-        for source_path in all_source_files:
-            base_name = os.path.splitext(os.path.basename(source_path))[0]
-            json_path = os.path.join(metadata_dir, f"{base_name}.json")
-            if os.path.exists(json_path):
-                # Document metadata exists, assume it's already in the DB from a prior run
-                st.sidebar.write(f"⏭️ Skipping {os.path.basename(source_path)}: Metadata exists at {os.path.basename(json_path)}.")
-            else:
-                # Metadata does not exist, this document needs to be added
-                st.sidebar.write(f"✅ Marking {os.path.basename(source_path)} for addition (Missing metadata).")
-                docs_to_add_paths.append(source_path)
-
-
-    if not docs_to_add_paths and not db_exists:
-        st.error("No documents found or marked for processing, and no existing database to load. Cannot proceed.")
+    if not docs_to_add_paths and not db_exists_logically:
+        st.error("No documents found or marked for processing, and no existing database was successfully loaded. Cannot proceed.")
         # Update the list of available docs in session state
         st.session_state.available_docs = list_source_document_basenames(docs_dir) # Re-list available after processing attempt
         st.session_state.selected_files = {name: st.session_state.selected_files.get(name, False) for name in st.session_state.available_docs}
-        return None
-    elif not docs_to_add_paths and db_exists:
+        return None # Return None if no DB exists or loaded AND no docs to add
+    elif not docs_to_add_paths and db_exists_logically:
          st.sidebar.write("No new documents found to add to the existing database.")
          # Update the list of available docs in session state
          st.session_state.available_docs = list_source_document_basenames(docs_dir)
          st.session_state.selected_files = {name: st.session_state.selected_files.get(name, False) for name in st.session_state.available_docs}
-         return vector_store # Return the loaded existing DB
+         return vector_store # Return the successfully loaded existing DB
 
 
     st.sidebar.write(f"Processing {len(docs_to_add_paths)} documents for addition.")
@@ -536,17 +505,25 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
                  st.sidebar.warning(f"Loader returned no documents for {os.path.basename(source_path)}, skipping.")
                  continue
 
-            metadata = extract_document_metadata(source_path, metadata_llm)
-
-            json_path = save_metadata_json(metadata, source_path, metadata_dir)
-            if json_path:
-                st.sidebar.write(f"Saved metadata for {os.path.basename(source_path)}")
+            # Ensure LLM is available before attempting metadata extraction
+            if metadata_llm is None:
+                st.sidebar.error("Metadata LLM is not initialized. Skipping metadata extraction and saving for this document.")
+                metadata = {} # Use empty metadata if LLM failed
             else:
-                 st.sidebar.warning(f"Failed to save metadata for {os.path.basename(source_path)}. Proceeding without saved metadata.")
+                metadata = extract_document_metadata(source_path, metadata_llm)
+                json_path = save_metadata_json(metadata, source_path, metadata_dir)
+                if json_path:
+                    st.sidebar.write(f"Saved metadata for {os.path.basename(source_path)}")
+                else:
+                     st.sidebar.warning(f"Failed to save metadata for {os.path.basename(source_path)}. Proceeding without saved metadata.")
 
+
+            # Add source and metadata to each document chunk
             for doc in documents:
-                 if 'source' not in doc.metadata:
-                      doc.metadata['source'] = source_path
+                 # Add original source path to metadata
+                 # This is useful for the prepend_reference_to_chunks function
+                 doc.metadata['source'] = source_path
+                 # Update with extracted metadata (might overwrite 'source' if LLM adds it, but that's unlikely/fine)
                  doc.metadata.update(metadata)
                  processed_docs_for_addition.append(doc)
 
@@ -554,15 +531,14 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
             st.sidebar.error(f"Error processing document {os.path.basename(source_path)}: {str(e)}. Skipping.")
 
     if not processed_docs_for_addition:
-        if not db_exists:
+        if not db_exists_logically:
             st.error("No documents were successfully processed to create a new database.")
         else:
             st.sidebar.write("No *new* documents were successfully processed to add to the database.")
         # Update the list of available docs in session state
         st.session_state.available_docs = list_source_document_basenames(docs_dir)
         st.session_state.selected_files = {name: st.session_state.selected_files.get(name, False) for name in st.session_state.available_docs}
-        # Return existing DB if it was loaded, otherwise None
-        return vector_store if db_exists else None
+        return vector_store if db_exists_logically else None # Return loaded DB if exists, else None
 
 
     # --- Split documents into chunks ---
@@ -576,90 +552,92 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
 
     chunks_to_add = []
     st.sidebar.write("Splitting documents into chunks...")
+    # Split documents by their original source path to ensure metadata is applied correctly per file
     docs_by_source = {}
     for doc in processed_docs_for_addition:
-         source = doc.metadata.get('source')
+         source = doc.metadata.get('source') # Rely on the source path added during loading
          if source:
               if source not in docs_by_source:
                    docs_by_source[source] = []
               docs_by_source[source].append(doc)
          else:
-             st.sidebar.warning(f"Document part found without source path. Splitting without specific reference.")
+             st.sidebar.warning(f"Document part found without source path after processing. Splitting without specific reference.")
+             # Split directly, prepend_reference_to_chunks will use generic "Unknown Document" if metadata is missing
              chunks_to_add.extend(text_splitter.split_documents([doc]))
+
 
     for source_path, docs_from_source in docs_by_source.items():
         try:
             doc_chunks = text_splitter.split_documents(docs_from_source)
+            # Load saved metadata if available, otherwise use metadata from the first doc part
             metadata = load_metadata_json(source_path, metadata_dir)
             if metadata is None and docs_from_source:
-                 metadata = docs_from_source[0].metadata
+                 metadata = docs_from_source[0].metadata # Fallback to embedded metadata
+                 st.sidebar.warning(f"Could not load saved metadata for {os.path.basename(source_path)}, using embedded metadata.")
+
             if metadata:
-                doc_chunks = prepend_reference_to_chunks(doc_chunks, metadata)
+                # Ensure source in metadata is the full path before prepending if it wasn't there
+                 if 'source' not in metadata: metadata['source'] = source_path
+                 doc_chunks = prepend_reference_to_chunks(doc_chunks, metadata)
+            else:
+                 st.sidebar.warning(f"No metadata available for {os.path.basename(source_path)}, chunks will have no reference prepended.")
+
             chunks_to_add.extend(doc_chunks)
             st.sidebar.write(f"- Split '{os.path.basename(source_path)}' into {len(doc_chunks)} chunks.")
         except Exception as e:
             st.sidebar.error(f"Error splitting or prepping chunks for {os.path.basename(source_path)}: {e}. Skipping chunks for this document.")
 
+
     if not chunks_to_add:
-        if not db_exists:
+        if not db_exists_logically:
             st.error("No text chunks were generated to create a new database.")
         else:
             st.sidebar.write("No text chunks were generated from new documents to add to the database.")
         st.session_state.available_docs = list_source_document_basenames(docs_dir)
         st.session_state.selected_files = {name: st.session_state.selected_files.get(name, False) for name in st.session_state.available_docs}
-        return vector_store if db_exists else None
+        return vector_store if db_exists_logically else None # Return loaded DB if exists, else None
+
 
     # --- Add the chunks to the vector store ---
     total_chunks = len(chunks_to_add)
 
-    if db_needs_full_recreate:
-        # Create a new vector store from all chunks
-        st.sidebar.write(f"Creating a new database and collection '{collection_name}' with {total_chunks} chunks...")
+    if not db_exists_logically:
+        # Create a new FAISS index from all chunks
+        st.sidebar.write(f"Creating a new FAISS index with {total_chunks} chunks...")
         try:
-            # This call handles client initialization and collection creation internally
-            vector_store = Chroma.from_documents(
+            # Ensure the directory exists before creating/saving
+            os.makedirs(db_path, exist_ok=True)
+            # Create the new index
+            new_vector_store = FAISS.from_documents(
                 documents=chunks_to_add,
-                embedding=embeddings,
-                persist_directory=db_path,
-                collection_name=collection_name
+                embedding=embeddings
             )
-            st.sidebar.write("✅ New vector store created successfully!")
+            # Save the new index
+            new_vector_store.save_local(db_path)
+
+            vector_store = new_vector_store
+            st.sidebar.write("✅ New FAISS index created and saved successfully!")
         except Exception as e:
-            st.error(f"Error creating new vector store: {str(e)}")
-            st.sidebar.error(f"Error creating new vector store: {str(e)}")
-            st.sidebar.warning(f"Cleaning up failed DB creation directory: {db_path}")
-            shutil.rmtree(db_path, ignore_errors=True)
+            st.error(f"Error creating/saving new FAISS index: {str(e)}")
+            st.sidebar.error(f"Error creating/saving new FAISS index: {str(e)}")
+            # Note: We are NOT cleaning up db_path directory automatically on create error
             vector_store = None # Ensure vector_store is None on failure
 
-    elif db_exists and vector_store:
+    elif db_exists_logically and vector_store:
         # Add documents to the existing vector store instance loaded earlier
         st.sidebar.write(f"Adding {total_chunks} new chunks to the existing database...")
         try:
-            added_ids = vector_store.add_documents(documents=chunks_to_add)
-            st.sidebar.write(f"✅ {len(added_ids)} new chunks added to the existing vector store!")
-            # Re-load the Chroma wrapper to ensure it reflects the new state, using the same client/embeddings
-            # While not strictly necessary for add_documents to work, re-initializing
-            # the vector_store object might prevent subtle issues with state sync
-            # especially if using features beyond simple add/retrieve.
-            try:
-                 client = chromadb.PersistentClient(
-                    path=db_path,
-                    settings=Settings(anonymized_telemetry=False, allow_reset=True)
-                )
-                 vector_store = Chroma(
-                    persist_directory=db_path,
-                    embedding_function=embeddings,
-                    client=client,
-                    collection_name=collection_name
-                )
-                 st.sidebar.write("Re-loaded vector store instance after adding documents.")
-            except Exception as e:
-                 st.sidebar.warning(f"Could not re-load vector store instance after adding documents: {e}")
-                 # Keep the potentially old vector_store instance if reload fails
+            # Add the chunks
+            vector_store.add_documents(documents=chunks_to_add)
+            # Save the updated index
+            vector_store.save_local(db_path)
+
+            st.sidebar.write(f"✅ {total_chunks} new chunks added and index saved!")
 
         except Exception as e:
-             st.sidebar.error(f"Error adding documents to existing DB: {e}")
-             st.error(f"Error adding documents to existing DB: {e}")
+             st.sidebar.error(f"Error adding documents or saving existing index: {e}")
+             st.error(f"Error adding documents or saving existing index: {e}")
+             # Keep vector_store as the potentially partially updated object, but show error
 
     # Update the list of available docs in session state regardless of DB success
     st.session_state.available_docs = list_source_document_basenames(docs_dir)
@@ -669,7 +647,7 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
 
 
 def load_vector_store(db_path, embedding_type, embedding_model, ollama_base_url=None):
-    """Load an existing vector store"""
+    """Load an existing FAISS vector store"""
     st.sidebar.write("Attempting to load existing vector database...")
     if not os.path.exists(db_path):
         st.sidebar.write(f"Database directory not found at '{db_path}'. Cannot load.")
@@ -682,72 +660,27 @@ def load_vector_store(db_path, embedding_type, embedding_model, ollama_base_url=
              st.sidebar.error("Failed to create embeddings model for loading.")
              return None # Return None if embeddings creation failed
 
-        # Initialize Chroma client
-        client = chromadb.PersistentClient(
-            path=db_path,
-            settings=Settings(
-                anonymized_telemetry=False,
-                allow_reset=True # Allows clearing the database programmatically if needed
-            )
-        )
+        # Attempt to load the FAISS index
+        # Set allow_dangerous_deserialization=True as required by recent library versions due to pickle
+        vector_store = FAISS.load_local(db_path, embeddings, allow_dangerous_deserialization=True)
 
-        # Check if the collection exists using get_collection
-        collection_name = "knowledge_docs"
-        try:
-             collection = client.get_collection(collection_name)
-             st.sidebar.write(f"Chroma collection '{collection_name}' found.")
-        except InvalidCollectionException:
-             st.warning(f"Vector database directory exists at `{db_path}`, but the collection '{collection_name}' was not found. Please rebuild the database.")
-             st.sidebar.warning(f"Chroma collection '{collection_name}' not found.")
-             return None
-        except Exception as e:
-             st.error(f"Error accessing Chroma collection '{collection_name}': {e}. Database might be corrupt. Please rebuild.")
-             st.sidebar.error(f"Error accessing Chroma collection: {e}")
-             return None
-
-
-        # Check if the embedding function used in the persisted Chroma matches the current one
-        # This check is important for compatibility.
-        # Chroma's get_collection doesn't directly expose the embedding function.
-        # The primary way incompatibility shows is usually during initialization or adding data.
-        # If we got here, client and collection are found. Let's proceed with creating the Chroma wrapper.
-        # If there's a deep incompatibility, it might manifest later during retrieval or adding.
-        # Relying on the 'Error creating new vector store' during build/update is one way this is caught.
-        # For loading, if the Chroma wrapper successfully initializes with the provided embedding_function
-        # pointing to an existing directory/collection, it often means it's compatible, or the incompatibility
-        # is subtle. Explicitly checking embedding function hash/name could be complex and depends on the
-        # embedding implementation. Let's trust Langchain/Chroma's internal checks for now.
-
-        vector_store = Chroma(
-            persist_directory=db_path,
-            embedding_function=embeddings, # Use the current embedding function
-            client=client,
-            collection_name=collection_name
-        )
-        # Optional: Check if the collection is empty
-        try:
-            count = collection.count() # Use the collection object retrieved earlier
-            if count == 0:
-                 st.warning(f"Vector database collection '{collection_name}' is empty. Please rebuild the database.")
-                 st.sidebar.warning(f"Collection '{collection_name}' is empty.")
-                 # Decide if empty DB should return None or an empty vector store.
-                 # Returning None makes chat ineligible. Let's return None if empty.
-                 return None
-            else:
-                 st.sidebar.write(f"Loaded database with {count} items.")
-        except Exception as e:
-            st.warning(f"Could not get item count from database collection: {e}. Database might need rebuilding.")
-            st.sidebar.warning(f"Could not get item count: {e}")
-            # If count fails but DB object exists, maybe it's still usable?
-            # Let's allow loading but warn. Rebuild is the safest fix.
-            pass # Keep the vector_store object even if count fails
+        # FAISS doesn't have a simple count() property or method after loading,
+        # but we can check if the internal docstore is non-empty as a basic check.
+        # Or rely on load_local failing for truly empty/corrupt dirs.
+        # Let's assume load_local successfully implies a valid index was loaded.
+        # Checking docstore length is fragile and might change across Langchain versions.
+        # Relying on load_local success/failure is more robust against internal changes.
 
         st.sidebar.write("✅ Existing vector database loaded successfully!")
         return vector_store
     except Exception as e:
-        st.error(f"Error loading vector store: {str(e)}")
-        st.sidebar.error(f"Error loading vector store: {str(e)}")
-        return None
+        # IMPORTANT: Catch *any* error during load and return None, do NOT delete files.
+        st.error(f"Error loading vector store from '{db_path}': {str(e)}. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path)}' directory to force a rebuild.")
+        st.sidebar.error(f"Error loading vector store: {str(e)}. Manual delete and rebuild required.")
+        return None # Return None on any load error
+
+
+# --- Rest of the Functions (mostly unchanged) ---
 
 def create_llm(model_type, model_name, ollama_base_url=None, temperature=0.2):
     """Create the appropriate LLM based on model type, name, and temperature"""
@@ -823,7 +756,7 @@ def initialize_conversation(vector_store, model_type, model_name, k_value=10, ol
             return_messages=True
         )
 
-        # Create retriever
+        # Create retriever - This method is common for various vector stores
         retriever = vector_store.as_retriever(search_kwargs={"k": k_value})
         st.sidebar.write(f"Retriever created (k={k_value}).")
 
@@ -833,9 +766,15 @@ def initialize_conversation(vector_store, model_type, model_name, k_value=10, ol
             # Ensure num_chunks_kept is not greater than k_value
             num_chunks_kept_actual = min(num_chunks_kept, k_value) # Use potentially adjusted value
             try:
-                compressor = LLMChainExtractor.from_llm(llm)
-                retriever = ContextualCompressionRetriever(base_compressor=compressor, base_retriever=retriever, k=num_chunks_kept_actual)
-                st.sidebar.write("Reranking retriever created.")
+                # LLMChainExtractor requires an LLM
+                if llm is None:
+                     st.warning("LLM not available for Reranking setup. Reranking disabled.")
+                     st.sidebar.error("LLM not available for Reranking.")
+                     use_reranking = False # Fallback
+                else:
+                    compressor = LLMChainExtractor.from_llm(llm)
+                    retriever = ContextualCompressionRetriever(base_compressor=compressor, base_retriever=retriever, k=num_chunks_kept_actual)
+                    st.sidebar.write("Reranking retriever created.")
             except Exception as e:
                 st.sidebar.error(f"Failed to create Reranking retriever: {e}. Proceeding without reranking.")
                 st.warning(f"Failed to set up LLM Reranking: {e}. Reranking disabled.")
@@ -907,7 +846,7 @@ def extract_markdown_content(text: str, type: str = "json") -> str:
 
 
 # Function to execute chain of thought reasoning with preserved context
-# (Keep this function as is, it uses the llm passed to it)
+# (Keep this function as is, it uses the llm and retriever passed to it)
 def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
     """Executes a chain of thought reasoning process using the LLM and retriever."""
     st.sidebar.write("Starting Chain of Thought process...")
@@ -934,13 +873,15 @@ def execute_chain_of_thought(llm, retriever, prompt, max_steps=5):
     st.sidebar.write("Retrieving documents for Chain of Thought context...")
     retrieved_docs = []
     try:
+        # Retriever works the same regardless of underlying store (FAISS/Chroma)
         retrieved_docs = retriever.get_relevant_documents(prompt)
         if not retrieved_docs:
              st.sidebar.write("No documents retrieved for context.")
              context = "No relevant documents found."
         else:
              st.sidebar.write(f"Retrieved {len(retrieved_docs)} documents for context.")
-             context = "\n\n".join([f"Source: {doc.metadata.get('source', 'Unknown')}\nContent: {doc.page_content}" for doc in retrieved_docs])
+             # Ensure we display the source correctly, using metadata
+             context = "\n\n".join([f"Source: {doc.metadata.get('source', 'Unknown File')}\nContent: {doc.page_content}" for doc in retrieved_docs])
 
 
     except Exception as e:
@@ -1171,7 +1112,7 @@ def get_document_loader(file_path):
             # For line-delimited JSONL, need different approach or jq schema for each line.
             # This loader might need customization based on JSON structure.
              # st.sidebar.warning(f"Using generic JSONLoader for {os.path.basename(file_path)}. May need custom schema.")
-             # Let's use text_content=True for simplicity in Complete Docs mode context concatenation
+             # Use text_content=True for simplicity, especially in Complete Docs mode
              return JSONLoader(file_path=file_path, jq_schema=".", text_content=True)
         elif ext == ".csv":
             return CSVLoader(file_path)
@@ -1209,6 +1150,7 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'conversation' not in st.session_state:
     st.session_state.conversation = None
+# vector_store will now be a FAISS object or None
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
 if 'llm' not in st.session_state:
@@ -1294,18 +1236,23 @@ with st.sidebar:
 
         embedding_model = "" # Default placeholder
         if embedding_type == "Ollama":
-            embedding_model = st.text_input("Ollama Embedding Model", os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"), key="ollama_embedding_model_input")
+            ollama_embedding_model_str = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
+            embedding_model = st.text_input("Ollama Embedding Model", ollama_embedding_model_str, key="ollama_embedding_model_input")
         elif embedding_type == "OpenAI":
-            embedding_model = st.text_input("OpenAI Embedding Model", os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"), key="openai_embedding_model_input")
+            openai_embedding_model_str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+            embedding_model = st.text_input("OpenAI Embedding Model", openai_embedding_model_str, key="openai_embedding_model_input")
         elif embedding_type == "Google":
-            embedding_model = st.text_input("Google Embedding Model", os.getenv("GOOGLE_EMBEDDING_MODEL", "models/embedding-001"), key="google_embedding_model_input")
+            google_embedding_model_str = os.getenv("GOOGLE_EMBEDDING_MODEL", "models/embedding-001")
+            embedding_model = st.text_input("Google Embedding Model", google_embedding_model_str, key="google_embedding_model_input")
 
+
+        # The path where FAISS saves its index and document store
         db_path = os.path.join(docs_dir, "vectorstore") if docs_dir else None
 
-        st.markdown("**Before creating your vector DB** make sure to delete any `vectorstore` or `metadata` subdirectories in the docs dir.")
+        st.markdown("**To perform a hard reset** you must manually delete the `vectorstore` and `metadata` subdirectories from the documents directory (`./docs` by default).")
 
         # Database operations button (moved to the bottom of this section)
-        build_db_button = st.button("🔨 Create Vector DB", key="build_db_button")
+        build_db_button = st.button("🔨 Create/Update Vector DB", key="build_db_button")
 
     # --- New Complete Documents Section ---
     with st.expander("Pass Complete Documents to LLM", expanded=False): # Collapsed by default
@@ -1324,7 +1271,6 @@ with st.sidebar:
                  st.session_state.selected_files = new_selected_files
                  # st.rerun() # Rerun here is often necessary for immediate checkbox updates, but let's see if Streamlit handles it naturally on state update. Adding rerun makes selection snappier.
                  # Note: Rerunning here *might* interfere with other input widgets if not careful. Test thoroughly.
-                 # Let's add it back if needed, but try without first.
 
 
             st.session_state.use_complete_docs = st.checkbox(
@@ -1342,10 +1288,17 @@ with st.sidebar:
                 else:
                     st.warning("🔴 Complete Documents mode active, no documents selected.")
             else:
+                # Check if FAISS directory exists to give better user feedback
+                faiss_db_path = os.path.join(docs_dir, "vectorstore") if docs_dir else None
+                faiss_db_exists_physically = faiss_db_path and os.path.exists(faiss_db_path)
+
                 if st.session_state.vector_store:
                     st.info("🔵 Using Vector Database retrieval.")
+                elif faiss_db_exists_physically:
+                     # Directory exists, but session state vector_store is None -> means load failed
+                     st.warning(f"⚪ Vector DB directory found at `{faiss_db_path}`, but failed to load. Database might be corrupt or incompatible. Please manually delete the directory to rebuild.")
                 else:
-                    st.warning("⚪ Context mode not active.")
+                    st.warning(f"⚪ Vector Database mode is active, but no database found at `{faiss_db_path}`. Please build it.")
 
 
             st.write("Select documents to use as context:")
@@ -1356,18 +1309,11 @@ with st.sidebar:
                  if st.button("Select All", key="select_all_docs_button"):
                       st.session_state.selected_files = {name: True for name in st.session_state.available_docs}
                       # st.rerun() # May need rerun here
-                 # Use link_button if preferred, but requires handling click state carefully
-                 # if st.link_button("Select All", key="select_all_docs_link"):
-                 #      st.session_state.selected_files = {name: True for name in st.session_state.available_docs}
-                 #      st.rerun()
 
             with col_sel2:
                  if st.button("Select None", key="select_none_docs_button"):
                       st.session_state.selected_files = {name: False for name in st.session_state.available_docs}
                       # st.rerun() # May need rerun here
-                 # if st.link_button("Select None", key="select_none_docs_link"):
-                 #      st.session_state.selected_files = {name: False for name in st.session_state.available_docs}
-                 #      st.rerun()
 
 
             # Display checkboxes for each document
@@ -1506,13 +1452,13 @@ with st.sidebar:
 
 
 # --- LLM Initialization (runs whenever settings change or on initial load) ---
+# LLM is needed for metadata extraction and chat
 current_llm_params = (model_type, model_name, ollama_base_url, st.session_state.temperature)
 
 # Check if LLM params have changed or if LLM isn't set yet
 # Also check if docs_dir is valid, as create_llm for metadata extraction is needed for DB build
 if docs_dir and (st.session_state.current_llm_params != current_llm_params or st.session_state.llm is None):
     st.session_state.current_llm_params = current_llm_params
-    # st.sidebar.write("Attempting to initialize LLM...") # Moved message inside create_llm
     llm_instance = create_llm(
         model_type,
         model_name,
@@ -1522,7 +1468,6 @@ if docs_dir and (st.session_state.current_llm_params != current_llm_params or st
 
     if llm_instance:
         st.session_state.llm = llm_instance
-        # st.sidebar.write("✅ LLM initialized.") # Message moved inside create_llm
         # If Vector DB *is* loaded, and LLM was just initialized/changed, re-initialize the conversation chain
         # Check if LLM instance itself is different, or just the params changed
         # Only re-initialize if we are *not* in complete docs mode OR if LLM is truly None
@@ -1540,10 +1485,7 @@ if docs_dir and (st.session_state.current_llm_params != current_llm_params or st
                  st.session_state.temperature
              )
              st.session_state.conversation = conversation
-             # Note: initialize_conversation also returns the created LLM, which might be a *new* instance
-             # based on the parameters. We should use the one returned by initialize_conversation
-             # if it was successful, as that's the LLM actually hooked into the chain.
-             # If initialize_conversation returns None for llm, stick with the llm_instance created just above.
+             # Use the LLM instance returned by initialize_conversation if successful, otherwise keep the one created just above
              st.session_state.llm = llm if llm is not None else llm_instance
              st.session_state.retriever = retriever
              if st.session_state.conversation:
@@ -1553,7 +1495,6 @@ if docs_dir and (st.session_state.current_llm_params != current_llm_params or st
 
     else:
         st.session_state.llm = None
-        # st.sidebar.warning("⚠️ Could not initialize LLM. Check settings and environment variables.") # Message moved inside create_llm
         # If LLM fails to initialize, the conversation chain (if using LLM) will also fail/be unusable
         st.session_state.conversation = None # Ensure conversation is reset if LLM fails
         st.session_state.retriever = None # Retriever might still exist, but chain is broken.
@@ -1606,6 +1547,7 @@ if st.session_state.build_db_button_clicked:
                 # This is important to reflect the new DB content and potentially changed settings
                 # Only initialize the vector DB chain if we are NOT in complete docs mode
                 if not st.session_state.use_complete_docs:
+                    # Re-initialize conversation chain with the new/updated vector_store
                     conversation, llm, retriever = initialize_conversation(
                         vector_store,
                         model_type,
@@ -1618,21 +1560,21 @@ if st.session_state.build_db_button_clicked:
                     )
                     st.session_state.conversation = conversation
                     # Update the main session state LLM and retriever from the chain initialization
-                    # Use the LLM instance returned by initialize_conversation if successful
-                    st.session_state.llm = llm if llm is not None else st.session_state.llm
+                    st.session_state.llm = llm if llm is not None else st.session_state.llm # Use the LLM instance returned if successful
                     st.session_state.retriever = retriever
                     if st.session_state.conversation:
                          st.sidebar.success("Conversation chain initialized with updated DB.")
                     else:
                          st.sidebar.error("Failed to initialize conversation chain after DB update.")
                 else:
-                     # If in complete docs mode, clear the vector DB chain variables
+                     # If in complete docs mode, ensure the vector DB chain variables are None
                      st.session_state.conversation = None
                      st.session_state.retriever = None
                      st.sidebar.write("Vector DB updated, but conversation chain is not initialized (Complete Documents mode active).")
 
             else:
                 st.error("Failed to create or update vector database.")
+                # Ensure related states are None if DB operation fails
                 st.session_state.vector_store = None
                 st.session_state.conversation = None
                 st.session_state.retriever = None
@@ -1649,8 +1591,8 @@ if st.session_state.build_db_button_clicked:
 # Also ensure required settings are available and LLM is initialized.
 if docs_dir and os.path.exists(docs_dir) and embedding_model and model_name and (model_type != "Ollama" or ollama_base_url) and st.session_state.llm is not None:
     db_path = os.path.join(docs_dir, "vectorstore")
-    # Only attempt to load DB if it exists and we are NOT using complete docs AND the DB isn't already loaded
-    if os.path.exists(db_path) and not st.session_state.vector_store and not st.session_state.use_complete_docs:
+    # Only attempt to load DB if the directory exists, and it's not already loaded, AND we are NOT using complete docs
+    if os.path.exists(db_path) and st.session_state.vector_store is None and not st.session_state.use_complete_docs:
         # Attempt to load the DB if the directory exists and it's not already loaded
         with st.spinner("Loading existing vector database..."):
             vector_store = load_vector_store(
@@ -1680,12 +1622,10 @@ if docs_dir and os.path.exists(docs_dir) and embedding_model and model_name and 
                      st.success("Existing vector database loaded and conversation initialized!")
                 else:
                     st.warning("Existing database loaded, but conversation chain could not be initialized. Check LLM settings.")
-            else:
-                st.warning("Could not load existing vector database. Please check settings or build/rebuild it.")
-                # Ensure related states are None if loading fails
-                st.session_state.vector_store = None
-                st.session_state.conversation = None
-                st.session_state.retriever = None
+            # If load_vector_store returned None, the error message is already displayed inside it.
+            # We do NOT reset st.session_state.vector_store here if it was None initially, as it might have
+            # been set by a failed build attempt. The crucial part is it stays None on load error.
+
 
 # Update available docs list on initial load or rerun if docs_dir is set
 if docs_dir:
@@ -1758,6 +1698,7 @@ if chat_eligible:
                                       # Concatenate content from all parts of this document
                                       full_text = "\n\n".join([d.page_content for d in documents])
                                       # Add source information and the full text for this document
+                                      # Use basename here for simpler display in the prompt context
                                       loaded_document_contents.append(f"--- Start Document: {os.path.basename(doc_path)} ---\n\n{full_text}\n\n--- End Document: {os.path.basename(doc_path)} ---")
                                       st.sidebar.write(f"- Loaded content from {os.path.basename(doc_path)}")
                                   except Exception as e:
@@ -1847,6 +1788,7 @@ if chat_eligible:
                          st.warning(response["answer"])
                     elif use_cot and st.session_state.llm and st.session_state.retriever:
                          # Use Chain of Thought if selected and LLM/Retriever are available
+                         # CoT logic handles retrieval internally using the passed retriever
                          answer, step_outputs = execute_chain_of_thought(
                              st.session_state.llm,
                              st.session_state.retriever,
@@ -1887,18 +1829,25 @@ else:
          st.warning("LLM is not initialized. Please check LLM settings in the sidebar and ensure API keys/endpoints are correct.")
     elif st.session_state.use_complete_docs and sum(st.session_state.selected_files.values()) == 0:
           st.warning("Complete Documents mode is enabled, but no documents are selected. Please select documents in the sidebar.")
-    elif not st.session_state.vector_store:
-         db_path_display = os.path.join(docs_dir or "your_docs_dir", "vectorstore")
-         st.warning(f"Vector database is not loaded or initialized. Please configure settings in the sidebar and click 'Create Vector DB' to build or load the database at `{db_path_display}`.")
-         if docs_dir and not os.path.exists(docs_dir):
-              st.info(f"Documents directory `{docs_dir}` not found or not specified. Please create the directory or enter a valid path in the sidebar.")
-    elif st.session_state.vector_store and st.session_state.conversation is None and not st.session_state.use_complete_docs:
-        st.warning("Vector database loaded, but conversation chain failed to initialize. Please check LLM settings (Provider, Model, API Keys/Endpoints) and click 'Create Vector DB' to re-initialize the chain.")
-    elif st.session_state.vector_store and st.session_state.use_complete_docs:
-         st.info("Vector database is built/loaded, but Complete Documents mode is active.")
-    else:
-         # Fallback for any other unhandled state - unlikely with the checks above
-         st.warning("Please configure settings in the sidebar and load/build the database or select documents to start chatting.")
+    else: # This covers cases where LLM is ready, but vector DB chain isn't AND Complete Docs isn't ready
+         db_path_display = os.path.join(docs_dir or "your_docs_dir", "vectorstore") if docs_dir else "./docs/vectorstore"
+         faiss_db_path = os.path.join(docs_dir, "vectorstore") if docs_dir else None
+         faiss_db_exists_physically = faiss_db_path and os.path.exists(faiss_db_path)
+
+         if st.session_state.vector_store is None and faiss_db_exists_physically:
+             st.warning(f"Vector database directory found at `{db_path_display}`, but failed to load. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path_display)}' directory to force a rebuild.")
+         elif st.session_state.vector_store is None and not faiss_db_exists_physically:
+             st.warning(f"Vector database is not loaded or initialized. Please configure settings in the sidebar and click 'Create Vector DB' to build or load the database at `{db_path_display}`.")
+             if docs_dir and not os.path.exists(docs_dir):
+                  st.info(f"Documents directory `{docs_dir}` not found or not specified. Please create the directory or enter a valid path in the sidebar.")
+         elif st.session_state.vector_store and st.session_state.conversation is None and not st.session_state.use_complete_docs:
+            st.warning("Vector database loaded, but conversation chain failed to initialize. Please check LLM settings (Provider, Model, API Keys/Endpoints) and click 'Create Vector DB' to re-initialize the chain.")
+         elif st.session_state.vector_store and st.session_state.use_complete_docs:
+             st.info("Vector database is built/loaded, but Complete Documents mode is active.")
+         else:
+             # Fallback for any other unhandled state - unlikely with the checks above
+             st.warning("Please configure settings in the sidebar and load/build the database or select documents to start chatting.")
+
 
 # --- Chat Bottom Buttons ---
 # Move these buttons to the bottom of the main chat area
