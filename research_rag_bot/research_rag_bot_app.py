@@ -1,3 +1,4 @@
+
 import streamlit as st
 import os
 from dotenv import load_dotenv
@@ -413,8 +414,8 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
     # --- Attempt to Load Existing FAISS DB ---
     # Check if the directory *physically* exists first and contains expected files
     # FAISS requires both index.faiss and index.pkl
-    faiss_index_file = os.path.join(db_path, "index.faiss")
-    faiss_pkl_file = os.path.join(db_path, "index.pkl")
+    faiss_index_file = os.path.join(db_path, "index.faiss") if db_path else None
+    faiss_pkl_file = os.path.join(db_path, "index.pkl") if db_path else None
 
     if db_path and os.path.exists(db_path) and os.path.exists(faiss_index_file) and os.path.exists(faiss_pkl_file):
         st.sidebar.write(f"Database directory found at '{db_path}' with expected files. Attempting to load existing FAISS index.")
@@ -1252,7 +1253,9 @@ def get_document_loader(file_path):
         elif ext in [".json", ".jsonl"]:
             # Note: JSONLoader requires a jq_schema. "." loads the root object.
             # Using text_content=True attempts to get text content from the parsed JSON.
-            return JSONLoader(file_path=file_path, jq_schema=".", text_content=True)
+            # It's often better to load as dict/list and then manually extract string content if needed
+            # Reverting to text_content=False to load structure, content extraction handled in extract_document_metadata and chat logic
+            return JSONLoader(file_path=file_path, jq_schema=".", text_content=False)
 
         elif ext == ".csv":
             return CSVLoader(file_path)
@@ -1273,10 +1276,11 @@ def list_source_documents(docs_dir):
     metadata_dir = os.path.join(docs_dir, "metadata")
     db_dir = os.path.join(docs_dir, "vectorstore") # Also exclude vectorstore dir
     # Use glob to find all files recursively
-    all_files = glob.glob(os.path.join(docs_dir, "**/*"), recursive=True)
+    # Adjusted pattern to not match directories directly
+    all_items = glob.glob(os.path.join(docs_dir, "**/*"), recursive=True)
     # Filter out directories and files within the metadata or vectorstore directories
     source_files = [
-        f for f in all_files
+        f for f in all_items
         if os.path.isfile(f)
         and not os.path.normpath(f).startswith(os.path.normpath(metadata_dir))
         and not os.path.normpath(f).startswith(os.path.normpath(db_dir))
@@ -1448,7 +1452,7 @@ with st.sidebar:
     with st.expander("Pass Complete Documents to LLM", expanded=False): # Collapsed by default
         # Re-list available documents whenever docs_dir might have changed or on explicit DB build
         if docs_dir:
-            current_available_doc_basenames = list_source_documents(docs_dir)
+            current_available_doc_basenames = list_source_document_basenames(docs_dir)
 
             # Update session state list of available document *basenames*
             # Check if the set of available basenames has changed
@@ -1459,7 +1463,7 @@ with st.sidebar:
                  for name in st.session_state.available_docs:
                       new_selected_files[name] = st.session_state.selected_files.get(name, False) # Preserve state if existing
                  st.session_state.selected_files = new_selected_files
-                 # st.rerun() # Rerun here is often necessary for immediate checkbox updates, but let's see if Streamlit handles it naturally on state update. Adding rerun makes selection snappier.
+                 # st.rerun() # Rerun here is often necessary for immediate selection dropdown update, but let's see if Streamlit handles it naturally on state update. Adding rerun makes selection snappier.
                  # Note: Rerunning here *might* interfere with other input widgets if not careful. Test thoroughly.
 
 
@@ -1471,8 +1475,8 @@ with st.sidebar:
             )
 
             # Show status message based on mode and selection
+            selected_count = sum(st.session_state.selected_files.values()) # Calculate selected count from state
             if st.session_state.use_complete_docs:
-                selected_count = sum(st.session_state.selected_files.values())
                 if selected_count > 0:
                     st.info(f"🟢 Using {selected_count} selected document(s) as context.")
                 else:
@@ -1489,57 +1493,51 @@ with st.sidebar:
                     st.info("🔵 Using Vector Database retrieval.")
                 elif faiss_db_exists_physically_and_complete:
                      # Directory and files exist, but vector_store is None -> means load failed
-                     st.warning(f"⚪ Vector DB directory found at `{db_path}`, but failed to load. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path)}' directory to force a rebuild.")
+                     st.warning(f"⚪ Vector DB directory found at `{db_path or './docs/vectorstore'}`, but failed to load. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path or 'vectorstore')}' directory to force a rebuild.")
                 elif faiss_db_dir_exists:
                      # Directory exists, but files are missing
-                     st.warning(f"⚪ Vector DB directory found at `{db_path}`, but required files (index.faiss, index.pkl) are missing. Database is incomplete. Please manually delete the directory to rebuild.")
+                     st.warning(f"⚪ Vector DB directory found at `{db_path or './docs/vectorstore'}`, but required files (index.faiss, index.pkl) are missing. Database is incomplete. Please manually delete the directory to rebuild.")
                 else:
                     st.warning(f"⚪ Vector Database mode is active, but no database found at `{db_path or './docs/vectorstore'}`. Please build it.")
 
 
             st.write("Select documents to use as context:")
 
-            # Select All/None links (Use buttons for better visual feedback)
+            # --- Dropdown for document selection ---
+            # Get the list of currently selected basenames from session state for the 'default' value
+            default_selected_basenames = [name for name, selected in st.session_state.selected_files.items() if selected]
+
+            selected_basenames_from_dropdown = st.multiselect(
+                 "Available Documents",
+                 options=st.session_state.available_docs, # Use basenames as options
+                 default=default_selected_basenames,      # Set default based on current state
+                 key="document_multiselect",            # Unique key for the widget
+                 label_visibility="collapsed"           # Hide the "Available Documents" label
+            )
+
+            # --- Update session state based on multiselect output ---
+            # Iterate through all available basenames
+            for doc_basename in st.session_state.available_docs:
+                 # If the basename is in the list returned by the multiselect, mark it as selected
+                 st.session_state.selected_files[doc_basename] = doc_basename in selected_basenames_from_dropdown
+
+            # --- Select All/None buttons ---
+            # These buttons will modify st.session_state.selected_files
+            # and then require a rerun to update the multiselect widget visually.
             col_sel1, col_sel2 = st.columns(2)
             with col_sel1:
                  if st.button("Select All", key="select_all_docs_button"):
                       st.session_state.selected_files = {name: True for name in st.session_state.available_docs}
-                      # st.rerun() # May need rerun here for immediate checkbox update visually
+                      st.rerun() # Rerun to update multiselect display
 
             with col_sel2:
                  if st.button("Select None", key="select_none_docs_button"):
                       st.session_state.selected_files = {name: False for name in st.session_state.available_docs}
-                      # st.rerun() # May need rerun here for immediate checkbox update visually
+                      st.rerun() # Rerun to update multiselect display
 
-
-            # Display checkboxes for each document
-            if st.session_state.available_docs:
-                # Sort the available documents alphabetically for consistent display
-                sorted_available_docs = sorted(st.session_state.available_docs)
-                for doc_basename in sorted_available_docs:
-                     # Use the basename as the key and label
-                     # Ensure the state is linked to the session state dict
-                     checkbox_state = st.session_state.selected_files.get(doc_basename, False)
-                     new_checkbox_state = st.checkbox(
-                         doc_basename,
-                         value=checkbox_state,
-                         key=f"select_doc_{doc_basename}" # Unique key for each checkbox
-                     )
-                     # Update session state if the value changed
-                     if new_checkbox_state != checkbox_state:
-                          st.session_state.selected_files[doc_basename] = new_checkbox_state
-                          # Rerun might be needed if you want immediate feedback in the count/status message
-                          # st.experimental_rerun() # Use only if necessary for UI responsiveness
-
-                # Show how many are selected below the checkboxes
-                selected_count_display = sum(st.session_state.selected_files.values())
-                st.caption(f"{selected_count_display} of {len(st.session_state.available_docs)} selected.")
-
-            else:
-                st.info("No documents found in the documents directory.")
-                # Ensure selection state is empty if no docs
-                st.session_state.selected_files = {}
-                st.session_state.available_docs = [] # Ensure the list is empty in state
+            # Show how many are selected below the multiselect
+            selected_count_display = sum(st.session_state.selected_files.values())
+            st.caption(f"{selected_count_display} of {len(st.session_state.available_docs)} selected.")
 
 
         else:
@@ -1804,7 +1802,8 @@ if docs_dir and os.path.exists(docs_dir) and embedding_model and (embedding_type
                         st.session_state.temperature # Pass the current temperature
                     )
                     st.session_state.conversation = conversation
-                    st.session_state.llm = llm if llm is not None else st.session_state.llm # Update LLM if init_conv succeeded
+                     # Update the main session state LLM and retriever from the chain initialization
+                    st.session_state.llm = llm if llm is not None else st.session_state.llm # Use the LLM instance returned by initialize_conversation
                     st.session_state.retriever = retriever
 
                     if st.session_state.conversation:
@@ -1816,8 +1815,9 @@ if docs_dir and os.path.exists(docs_dir) and embedding_model and (embedding_type
 
 
 # Update available docs list on initial load or rerun if docs_dir is set
+# This ensures the multiselect reflects the actual files in the directory
 if docs_dir:
-     current_available_doc_basenames = list_source_documents(docs_dir)
+     current_available_doc_basenames = list_source_document_basenames(docs_dir)
      if set(st.session_state.available_docs) != set(current_available_doc_basenames):
           st.session_state.available_docs = sorted(current_available_doc_basenames) # Keep sorted
           # Reset selection state for any removed files, add new ones (default False)
@@ -1877,7 +1877,9 @@ if chat_eligible:
                         st.sidebar.write(f"Loading content from {len(selected_paths)} selected documents for context...")
                         loaded_document_contents = []
                         total_chars = 0
-                        char_limit = 500000 # Approximate token limit avoidance for direct context
+                        # Increased char limit, but still a heuristic
+                        # This is LLM-dependent, adjust based on model context window
+                        char_limit = 1000000 # Example: ~1MB of text is rough estimate
 
                         for doc_path in selected_paths:
                              loader = get_document_loader(doc_path)
@@ -1886,6 +1888,7 @@ if chat_eligible:
                                       # Load ALL content from the document using the loader
                                       documents = loader.load() # Loader might return list of pages/docs
                                       # Concatenate content from all parts of this document
+                                      # Handle potential non-string page_content from loaders like JSONLoader
                                       full_text = "\n\n".join([str(d.page_content) for d in documents]) # Ensure string conversion
                                       # Check if adding this document exceeds char limit
                                       if total_chars + len(full_text) > char_limit:
