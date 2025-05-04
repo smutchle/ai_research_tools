@@ -1889,11 +1889,11 @@ else:
           st.warning("Complete Documents mode is enabled, but no documents are selected. Please select documents in the sidebar.")
     elif not st.session_state.vector_store:
          db_path_display = os.path.join(docs_dir or "your_docs_dir", "vectorstore")
-         st.warning(f"Vector database is not loaded or initialized. Please configure settings in the sidebar and click 'Create/Update Vector DB' to build or load the database at `{db_path_display}`.")
+         st.warning(f"Vector database is not loaded or initialized. Please configure settings in the sidebar and click 'Create Vector DB' to build or load the database at `{db_path_display}`.")
          if docs_dir and not os.path.exists(docs_dir):
               st.info(f"Documents directory `{docs_dir}` not found or not specified. Please create the directory or enter a valid path in the sidebar.")
     elif st.session_state.vector_store and st.session_state.conversation is None and not st.session_state.use_complete_docs:
-        st.warning("Vector database loaded, but conversation chain failed to initialize. Please check LLM settings (Provider, Model, API Keys/Endpoints) and click 'Create/Update Vector DB' to re-initialize the chain.")
+        st.warning("Vector database loaded, but conversation chain failed to initialize. Please check LLM settings (Provider, Model, API Keys/Endpoints) and click 'Create Vector DB' to re-initialize the chain.")
     elif st.session_state.vector_store and st.session_state.use_complete_docs:
          st.info("Vector database is built/loaded, but Complete Documents mode is active.")
     else:
