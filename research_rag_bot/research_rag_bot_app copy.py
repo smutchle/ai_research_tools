@@ -1094,222 +1094,250 @@ st.markdown("Ask questions about your documents.")
 
 # Sidebar for configuration
 with st.sidebar:
-    # Use expander for Vector DB Settings
-    with st.expander("Vector DB Settings", expanded=False): # Collapsed by default
-        # Input for documents directory
-        docs_dir = st.text_input("Documents Directory", os.getenv("SOURCE_DOC_DIR", "docs"))
-        # Ensure docs_dir is created if it doesn't exist
-        if docs_dir:
-            try:
-                os.makedirs(docs_dir, exist_ok=True)
-                # st.info(f"Using documents directory: {docs_dir}") # Avoid spamming
-            except OSError as e:
-                st.error(f"Error creating/accessing documents directory {docs_dir}: {e}")
+    # Document retrieval settings
+    st.subheader("Vector DB Settings")
+
+    # Input for documents directory
+    docs_dir = st.text_input("Documents Directory", os.getenv("SOURCE_DOC_DIR", "docs"))
+    # Ensure docs_dir is created if it doesn't exist
+    if docs_dir:
+        try:
+            os.makedirs(docs_dir, exist_ok=True)
+            # st.info(f"Using documents directory: {docs_dir}") # Avoid spamming
+        except OSError as e:
+            st.error(f"Error creating/accessing documents directory {docs_dir}: {e}")
 
 
-        # Chunk size slider
-        chunk_size = st.slider(
-            "Chunk Size",
-            min_value=100, # Smaller min for diverse docs
-            max_value=8000,
-            value=st.session_state.chunk_size, # Use session state default/current
-            step=100,
-            help="Size of text chunks when processing documents (in characters)"
-        )
-        st.session_state.chunk_size = chunk_size
+    # Chunk size slider
+    chunk_size = st.slider(
+        "Chunk Size",
+        min_value=100, # Smaller min for diverse docs
+        max_value=8000,
+        value=st.session_state.chunk_size, # Use session state default/current
+        step=100,
+        help="Size of text chunks when processing documents (in characters)"
+    )
+    st.session_state.chunk_size = chunk_size
 
-        # Chunk overlap slider
-        chunk_overlap = st.slider(
-            "Chunk Overlap",
-            min_value=0,
-            max_value=1000,
-            value=st.session_state.chunk_overlap, # Use session state default/current
-            step=50,
-            help="Amount of overlap between consecutive chunks (in characters)"
-        )
-        st.session_state.chunk_overlap = chunk_overlap
+    # Chunk overlap slider
+    chunk_overlap = st.slider(
+        "Chunk Overlap",
+        min_value=0,
+        max_value=1000,
+        value=st.session_state.chunk_overlap, # Use session state default/current
+        step=50,
+        help="Amount of overlap between consecutive chunks (in characters)"
+    )
+    st.session_state.chunk_overlap = chunk_overlap
 
-        # Embedding model selection
-        embedding_providers_str = os.getenv("EMBEDDING_PROVIDERS", "Ollama,OpenAI,Google")
-        embedding_type = st.selectbox(
-            "Select Embedding Model Provider",
-            split_csv(embedding_providers_str),
-            index=0
-        )
+    # Embedding model selection
+    embedding_providers_str = os.getenv("EMBEDDING_PROVIDERS", "Ollama,OpenAI,Google")
+    embedding_type = st.selectbox(
+        "Select Embedding Model Provider",
+        split_csv(embedding_providers_str),
+        index=0
+    )
 
-        embedding_model = "nomic-embed-text:latest" # Default placeholder, updated below
-        if embedding_type == "Ollama":
-            embedding_model = st.text_input("Ollama Embedding Model", os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"))
-        elif embedding_type == "OpenAI":
-            embedding_model = st.text_input("OpenAI Embedding Model", os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"))
-        elif embedding_type == "Google":
-            embedding_model = st.text_input("Google Embedding Model", os.getenv("GOOGLE_EMBEDDING_MODEL", "models/embedding-001"))
+    embedding_model = "nomic-embed-text:latest" # Default placeholder, updated below
+    if embedding_type == "Ollama":
+        embedding_model = st.text_input("Ollama Embedding Model", os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"))
+    elif embedding_type == "OpenAI":
+        embedding_model = st.text_input("OpenAI Embedding Model", os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"))
+    elif embedding_type == "Google":
+        embedding_model = st.text_input("Google Embedding Model", os.getenv("GOOGLE_EMBEDDING_MODEL", "models/embedding-001"))
 
-        db_path = os.path.join(docs_dir, "vectorstore")
-
-        # Database operations button (moved to the bottom of this section)
-        build_db_button = st.button("🔨 Create/Update Vector DB")
+    db_path = os.path.join(docs_dir, "vectorstore")
+    # print("Using: ", db_path, " for vector database...") # Keep this for server logs
 
 
-    # Use expander for LLM Settings
-    with st.expander("LLM Settings", expanded=True): # Expanded by default
-        # Temperature Slider
-        temperature = st.slider(
-            "LLM Temperature",
-            min_value=0.0,
-            max_value=1.0,
-            value=st.session_state.temperature, # Use session state default/current
-            step=0.05,
-            help="Controls randomness in LLM responses. Lower = more deterministic, Higher = more creative/varied. Default is 0.2."
-        )
-        st.session_state.temperature = temperature
+    st.subheader("LLM Settings")
+
+    # Temperature Slider
+    temperature = st.slider(
+        "LLM Temperature",
+        min_value=0.0,
+        max_value=1.0,
+        value=st.session_state.temperature, # Use session state default/current
+        step=0.05,
+        help="Controls randomness in LLM responses. Lower = more deterministic, Higher = more creative/varied. Default is 0.2."
+    )
+    st.session_state.temperature = temperature
 
 
-        # Number of retrieved documents
-        k_value = st.slider(
-            "Number of retrieved documents (K)",
+    # Number of retrieved documents
+    k_value = st.slider(
+        "Number of retrieved documents (K)",
+        min_value=1,
+        max_value=100,
+        value=st.session_state.k_value, # Use session state default/current
+        step=1,
+        help="Controls how many relevant documents to retrieve for each query *before* optional reranking."
+    )
+    st.session_state.k_value = k_value
+
+     # Add LLM Reranking option
+    use_reranking = st.checkbox("Use LLM Reranking", value=st.session_state.use_reranking)
+    st.session_state.use_reranking = use_reranking
+
+     # Number of chunks kept for reranking
+    # Only show if reranking is enabled
+    if use_reranking:
+        num_chunks_kept = st.slider(
+            "Number of Chunks Kept After Reranking",
             min_value=1,
-            max_value=100,
-            value=st.session_state.k_value, # Use session state default/current
+            max_value=st.session_state.k_value,  # Limit to the number of retrieved documents
+            value=st.session_state.num_chunks_kept, # Use session state default/current
             step=1,
-            help="Controls how many relevant documents to retrieve for each query *before* optional reranking."
+            help="Number of chunks to keep after LLM reranking. Must be less than or equal to the number of retrieved documents (K)."
         )
-        st.session_state.k_value = k_value
-
-         # Add LLM Reranking option
-        use_reranking = st.checkbox("Use LLM Reranking", value=st.session_state.use_reranking)
-        st.session_state.use_reranking = use_reranking
-
-         # Number of chunks kept for reranking
-        # Only show if reranking is enabled
-        if use_reranking:
-            num_chunks_kept = st.slider(
-                "Number of Chunks Kept After Reranking",
-                min_value=1,
-                max_value=st.session_state.k_value,  # Limit to the number of retrieved documents
-                value=st.session_state.num_chunks_kept, # Use session state default/current
-                step=1,
-                help="Number of chunks to keep after LLM reranking. Must be less than or equal to the number of retrieved documents (K)."
-            )
-            st.session_state.num_chunks_kept = num_chunks_kept
-        else:
-             # If reranking is off, effectively all K chunks are kept
-             st.session_state.num_chunks_kept = st.session_state.k_value
+        st.session_state.num_chunks_kept = num_chunks_kept
+    else:
+         # If reranking is off, effectively all K chunks are kept
+         # We might set this state variable for clarity or just use k_value directly where needed
+         # Let's set it for consistency, though it's only used if use_reranking is True
+         st.session_state.num_chunks_kept = st.session_state.k_value
 
 
-        # Model selection
-        llm_providers_str = os.getenv("LLM_PROVIDERS", "Ollama,OpenAI,Anthropic,Google")
-        model_type = st.selectbox(
-            "Select LLM Provider",
-            split_csv(llm_providers_str),
+    # Model selection
+    llm_providers_str = os.getenv("LLM_PROVIDERS", "Ollama,OpenAI,Anthropic,Google")
+    model_type = st.selectbox(
+        "Select LLM Provider",
+        split_csv(llm_providers_str),
+        index=0
+    )
+
+    # Model selection based on provider
+    model_name = "" # Default placeholder
+    ollama_base_url = None # Default to None
+
+    if model_type == "Ollama":
+        ollama_model_str = os.getenv("OLLAMA_MODEL", "llama3:latest,mistral:latest")
+        model_name = st.selectbox(
+            "Select Ollama Model",
+            split_csv(ollama_model_str),
+            index=0
+        )
+        ollama_base_url = st.text_input("Ollama Base URL", os.getenv("OLLAMA_END_POINT", "http://localhost:11434"))
+    elif model_type == "OpenAI":
+        openai_model_str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo,gpt-4o")
+        model_name = st.selectbox(
+            "Select OpenAI Model",
+            split_csv(openai_model_str),
+            index=0
+        )
+    elif model_type == "Anthropic":
+        anthropic_model_str = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307,claude-3-sonnet-20240229")
+        model_name = st.selectbox(
+            "Select Anthropic Model",
+            split_csv(anthropic_model_str),
+            index=0
+        )
+    elif model_type == "Google":
+        google_model_str = os.getenv("GOOGLE_MODEL", "gemini-pro")
+        model_name = st.selectbox(
+            "Select Google Model",
+            split_csv(google_model_str),
             index=0
         )
 
-        # Model selection based on provider
-        model_name = "" # Default placeholder
-        ollama_base_url = None # Default to None
-
-        if model_type == "Ollama":
-            ollama_model_str = os.getenv("OLLAMA_MODEL", "llama3:latest,mistral:latest")
-            model_name = st.selectbox(
-                "Select Ollama Model",
-                split_csv(ollama_model_str),
-                index=0
-            )
-            ollama_base_url = st.text_input("Ollama Base URL", os.getenv("OLLAMA_END_POINT", "http://localhost:11434"))
-        elif model_type == "OpenAI":
-            openai_model_str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo,gpt-4o")
-            model_name = st.selectbox(
-                "Select OpenAI Model",
-                split_csv(openai_model_str),
-                index=0
-            )
-        elif model_type == "Anthropic":
-            anthropic_model_str = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307,claude-3-sonnet-20240229")
-            model_name = st.selectbox(
-                "Select Anthropic Model",
-                split_csv(anthropic_model_str),
-                index=0
-            )
-        elif model_type == "Google":
-            google_model_str = os.getenv("GOOGLE_MODEL", "gemini-pro")
-            model_name = st.selectbox(
-                "Select Google Model",
-                split_csv(google_model_str),
-                index=0
-            )
-
-        # Add Chain of Thought option
-        use_cot = st.checkbox("Use Chain of Thought", value=False)
+    # Add Chain of Thought option
+    use_cot = st.checkbox("Use Chain of Thought", value=False)
 
 
-# Handle database building/updating (placed outside sidebar but triggered by sidebar button)
-if 'build_db_button_state' not in st.session_state:
-    st.session_state.build_db_button_state = False
+    st.markdown("---")
 
-# Use a hidden button or callback trick if needed for instant reaction,
-# but a simple check like this works for re-running script on button press.
-if build_db_button:
-    st.session_state.build_db_button_state = True # Set state when button is pressed
+    # Database operations button
+    build_db_button = st.button("🔨 Create/Update Vector DB")
 
-if st.session_state.build_db_button_state:
-    st.session_state.build_db_button_state = False # Reset the state
-
-    if not docs_dir:
-         st.error("Please specify a documents directory.")
-    elif not embedding_model:
-         st.error("Please specify an embedding model.")
-    elif model_type == "Ollama" and not ollama_base_url:
-         st.error("Please specify the Ollama Base URL.")
-    elif not model_name:
-         st.error("Please select or specify an LLM model name.")
-    else:
-        with st.spinner("Processing documents and updating vector database..."):
-            vector_store = create_or_update_vector_store(
-                docs_dir,
-                db_path,
-                embedding_type,
-                embedding_model,
-                model_type, # Pass model_type for metadata LLM
-                model_name, # Pass model_name for metadata LLM
-                ollama_base_url if model_type == "Ollama" else None,
-                st.session_state.temperature # Pass the current temperature
-            )
-            if vector_store:
-                st.session_state.vector_store = vector_store
-                # Initialize conversation with new/updated vector store and current settings
-                # This is important to reflect the new DB content and potentially changed settings
-                conversation, llm, retriever = initialize_conversation(
-                    vector_store,
-                    model_type,
-                    model_name,
-                    st.session_state.k_value,
+    # Handle database building/updating
+    if build_db_button:
+        if not docs_dir:
+             st.error("Please specify a documents directory.")
+        elif not embedding_model:
+             st.error("Please specify an embedding model.")
+        elif model_type == "Ollama" and not ollama_base_url:
+             st.error("Please specify the Ollama Base URL.")
+        elif not model_name:
+             st.error("Please select or specify an LLM model name.")
+        else:
+            with st.spinner("Processing documents and updating vector database..."):
+                vector_store = create_or_update_vector_store(
+                    docs_dir,
+                    db_path,
+                    embedding_type,
+                    embedding_model,
+                    model_type, # Pass model_type for metadata LLM
+                    model_name, # Pass model_name for metadata LLM
                     ollama_base_url if model_type == "Ollama" else None,
-                    st.session_state.use_reranking,
-                    st.session_state.num_chunks_kept,
                     st.session_state.temperature # Pass the current temperature
                 )
-                st.session_state.conversation = conversation
-                st.session_state.llm = llm
-                st.session_state.retriever = retriever
-                if st.session_state.conversation:
-                     st.sidebar.success("Conversation chain initialized with updated DB.")
-                     # Clear chat history after DB update? Or keep? Let's keep for now.
-                     # st.session_state.chat_history = []
+                if vector_store:
+                    st.session_state.vector_store = vector_store
+                    # Initialize conversation with new/updated vector store and current settings
+                    # This is important to reflect the new DB content and potentially changed settings
+                    conversation, llm, retriever = initialize_conversation(
+                        vector_store,
+                        model_type,
+                        model_name,
+                        st.session_state.k_value,
+                        ollama_base_url if model_type == "Ollama" else None,
+                        st.session_state.use_reranking,
+                        st.session_state.num_chunks_kept,
+                        st.session_state.temperature # Pass the current temperature
+                    )
+                    st.session_state.conversation = conversation
+                    st.session_state.llm = llm
+                    st.session_state.retriever = retriever
+                    if st.session_state.conversation:
+                         st.sidebar.success("Conversation chain initialized with updated DB.")
+                         # Clear chat history after DB update? Or keep? Let's keep for now.
+                         # st.session_state.chat_history = []
+                    else:
+                         st.sidebar.error("Failed to initialize conversation chain after DB update.")
                 else:
-                     st.sidebar.error("Failed to initialize conversation chain after DB update.")
+                    st.error("Failed to create or update vector database.")
+                    st.session_state.vector_store = None
+                    st.session_state.conversation = None
+                    st.session_state.llm = None
+                    st.session_state.retriever = None
+
+    st.markdown("---") # Separator
+
+
+    # Handle chat reset
+    reset_chat = st.button("🔄 Reset Chat")
+    if reset_chat:
+        st.session_state.chat_history = []
+        st.session_state.conversation = None # Clear conversation to force re-init
+        st.session_state.llm = None
+        st.session_state.retriever = None
+        # If vector store exists, re-initialize the conversation chain
+        if st.session_state.vector_store:
+            st.sidebar.write("Resetting chat and re-initializing conversation chain...")
+            conversation, llm, retriever = initialize_conversation(
+                st.session_state.vector_store,
+                model_type,
+                model_name,
+                st.session_state.k_value,
+                ollama_base_url if model_type == "Ollama" else None,
+                st.session_state.use_reranking,
+                st.session_state.num_chunks_kept,
+                st.session_state.temperature # Pass the current temperature
+            )
+            st.session_state.conversation = conversation
+            st.session_state.llm = llm
+            st.session_state.retriever = retriever
+            if st.session_state.conversation:
+                 st.sidebar.success("Conversation chain re-initialized.")
             else:
-                st.error("Failed to create or update vector database.")
-                st.session_state.vector_store = None
-                st.session_state.conversation = None
-                st.session_state.llm = None
-                st.session_state.retriever = None
+                 st.sidebar.error("Failed to re-initialize conversation chain.")
+        st.rerun()
+
 
 # --- Initial Load Logic ---
 # This block runs on initial app load or after a reset if DB exists,
 # but ONLY if the vector_store and conversation are NOT already in session state.
-# Also ensure required settings are available
-if docs_dir and os.path.exists(docs_dir) and embedding_model and model_name and (model_type != "Ollama" or ollama_base_url):
+if docs_dir and os.path.exists(docs_dir): # Only attempt if docs_dir is set and exists
     db_path = os.path.join(docs_dir, "vectorstore")
     if os.path.exists(db_path) and not st.session_state.vector_store:
         # Attempt to load the DB if the directory exists and it's not already loaded
@@ -1344,6 +1372,76 @@ if docs_dir and os.path.exists(docs_dir) and embedding_model and model_name and 
                 st.warning("Could not load existing vector database. Please check settings or build/rebuild it.")
 # --- End Initial Load Logic ---
 
+
+# Display API key status
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("Provider Status")
+
+    openai_key = os.getenv("OPENAI_API_KEY")
+    claude_key = os.getenv("CLAUDE_API_KEY")
+    google_key = os.getenv("GOOGLE_API_KEY")
+    ollama_url = os.getenv("OLLAMA_END_POINT")
+
+    if model_type == "OpenAI":
+        if openai_key:
+            st.success("OpenAI API Key: Loaded ✅")
+        else:
+            st.error("OpenAI API Key: Missing ❌ - Set OPENAI_API_KEY env var.")
+    elif model_type == "Anthropic":
+         if claude_key:
+            st.success("Claude API Key: Loaded ✅")
+         else:
+            st.error("Claude API Key: Missing ❌ - Set CLAUDE_API_KEY env var.")
+    elif model_type == "Google":
+         if google_key:
+            st.success("Google API Key: Loaded ✅")
+         else:
+            st.error("Google API Key: Missing ❌ - Set GOOGLE_API_KEY env var.")
+    elif model_type == "Ollama":
+         if ollama_url:
+             st.success("Ollama Endpoint: Set ✅")
+         else:
+             st.warning("Ollama Endpoint: Not set ❌ - Set OLLAMA_END_POINT env var or enter manually.")
+
+    # Embedding provider status (optional, can add similar checks)
+    # if embedding_type == "OpenAI" and not openai_key:
+    #     st.error("OpenAI Embedding requires API Key ❌")
+    # elif embedding_type == "Google" and not google_key:
+    #      st.error("Google Embedding requires API Key ❌")
+    # elif embedding_type == "Ollama" and not ollama_url:
+    #      st.warning("Ollama Embedding requires Endpoint ❌")
+
+
+    # Add Quarto export button
+    st.markdown("---")
+    st.subheader("Export Conversation")
+
+    if st.button("📥 Download Chat as Quarto (.qmd)"):
+        if st.session_state.chat_history:
+            qmd_content = convert_chat_to_qmd(st.session_state.chat_history)
+            st.markdown(get_download_link(qmd_content), unsafe_allow_html=True)
+            # st.success("Quarto document ready for download!") # Link is directly displayed
+        else:
+            st.warning("No chat history to export yet.")
+
+# Add helpful information in the sidebar
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("""
+    ### Instructions
+    1. Enter the path to your documents directory (`docs/` by default). Place your `.pdf`, `.txt`, `.md`, `.qmd`, `.json`, `.jsonl`, `.csv`, `.ipynb` files inside.
+    2. Adjust the document processing settings (chunk size, overlap) if needed.
+    3. Select your preferred Embedding and LLM providers and models.
+    4. Adjust LLM Temperature (lower = more focused, higher = more creative). Default is 0.2.
+    5. Click **'Create/Update Vector DB'**. This builds the database initially or adds new documents if the DB exists. Progress and skipped/added files are shown in the sidebar.
+    6. Toggle 'Use Chain of Thought' for step-by-step reasoning (might be slower).
+    7. Toggle 'Use LLM Reranking' to improve retrieved chunk quality.
+    8. Click 'Reset Chat' to clear history and re-initialize the conversation with current settings.
+    9. Ask questions about your documents in the chat input below! 🚀
+
+    Supported file types: `.pdf`, `.txt`, `.md`, `.qmd`, `.json`, `.jsonl`, `.csv`, `.ipynb`.
+    """)
 
 # Main layout for chat
 if st.session_state.vector_store and st.session_state.conversation:
@@ -1387,16 +1485,12 @@ if st.session_state.vector_store and st.session_state.conversation:
                     # We need to convert our session state history.
                     langchain_history = []
                     # Iterate in steps of 2 (user, assistant pairs)
-                    # Ensure we don't include the current user message being processed
-                    history_for_chain = st.session_state.chat_history[:-1] if len(st.session_state.chat_history) > 0 else []
-
-                    for i in range(0, len(history_for_chain), 2):
-                         if i + 1 < len(history_for_chain): # Ensure there's a pair
-                            user_msg = history_for_chain[i]
-                            ai_msg = history_for_chain[i+1]
-                            if user_msg['role'] == 'user' and ai_msg['role'] == 'assistant':
-                                langchain_history.append((user_msg['content'], ai_msg['content']))
-                            # Handle cases where roles might be mismatched, maybe skip or log warning
+                    for i in range(0, len(st.session_state.chat_history) - 1, 2):
+                         user_msg = st.session_state.chat_history[i]
+                         ai_msg = st.session_state.chat_history[i+1]
+                         if user_msg['role'] == 'user' and ai_msg['role'] == 'assistant':
+                              langchain_history.append((user_msg['content'], ai_msg['content']))
+                         # Handle potential incomplete pair (last user message) - it's the current prompt
 
                     # Execute query
                     response = st.session_state.conversation.invoke({"question": prompt, "chat_history": langchain_history})
@@ -1422,69 +1516,19 @@ if st.session_state.vector_store and st.session_state.conversation:
         else:
             st.warning("Conversation chain is not initialized. Please build/load the database first.")
 
-    # --- Chat Bottom Buttons ---
-    # Move these buttons to the bottom of the main chat area
-    st.markdown("---") # Separator before buttons
-
-    col1, col2 = st.columns(2) # Use columns for horizontal layout
-
-    with col1:
-        # Handle chat reset
-        reset_chat = st.button("🔄 Reset Chat")
-        if reset_chat:
-            st.session_state.chat_history = []
-            st.session_state.conversation = None # Clear conversation to force re-init
-            st.session_state.llm = None
-            st.session_state.retriever = None
-            # If vector store exists, re-initialize the conversation chain
-            if st.session_state.vector_store:
-                st.sidebar.write("Resetting chat and re-initializing conversation chain...")
-                conversation, llm, retriever = initialize_conversation(
-                    st.session_state.vector_store,
-                    model_type, # Use current selection
-                    model_name, # Use current selection
-                    st.session_state.k_value, # Use current selection
-                    ollama_base_url if model_type == "Ollama" else None, # Use current selection
-                    st.session_state.use_reranking, # Use current selection
-                    st.session_state.num_chunks_kept, # Use current selection
-                    st.session_state.temperature # Pass the current temperature
-                )
-                st.session_state.conversation = conversation
-                st.session_state.llm = llm
-                st.session_state.retriever = retriever
-                if st.session_state.conversation:
-                     st.sidebar.success("Conversation chain re-initialized.")
-                else:
-                     st.sidebar.error("Failed to re-initialize conversation chain.")
-            st.rerun() # Rerun the script to clear chat display
-
-
-    with col2:
-        # Add Quarto export button
-        if st.button("📥 Download Chat as Quarto (.qmd)"):
-            if st.session_state.chat_history:
-                qmd_content = convert_chat_to_qmd(st.session_state.chat_history)
-                # Display the download link directly after the button click
-                st.markdown(get_download_link(qmd_content), unsafe_allow_html=True)
-            else:
-                st.warning("No chat history to export yet.")
-    # --- End Chat Bottom Buttons ---
-
-
 else:
     # Message to display if vector store or conversation is not ready
     docs_dir_exists = os.path.exists(docs_dir) if docs_dir else False
     db_path = os.path.join(docs_dir, "vectorstore") if docs_dir else "path/to/vectorstore"
     db_dir_exists = os.path.exists(db_path) if docs_dir else False
 
-    if not docs_dir or not docs_dir_exists:
-        st.info(f"Documents directory `{docs_dir}` not found or not specified. Please create the directory or enter a valid path in the sidebar.")
+    if not docs_dir_exists:
+        st.info(f"Documents directory `{docs_dir}` not found. Please create the directory or enter a valid path in the sidebar.")
     elif not db_dir_exists:
-         st.info(f"Vector database directory not found at `{db_path}`. Please configure settings in the sidebar and click 'Create/Update Vector DB'.")
+         st.info(f"Vector database directory not found at `{db_path}`. Please configure settings and click 'Create/Update Vector DB'.")
     elif not st.session_state.vector_store:
-         st.warning(f"Vector database directory found at `{db_path}`, but could not load the database. Please check settings in the sidebar or click 'Create/Update Vector DB' to rebuild.")
+         st.warning(f"Vector database directory found at `{db_path}`, but could not load the database. Please check settings or click 'Create/Update Vector DB' to rebuild.")
     elif not st.session_state.conversation:
-        st.warning("Vector database loaded, but conversation chain failed to initialize. Please check LLM settings (Provider, Model, API Keys/Endpoints) in the sidebar and click 'Create/Update Vector DB' to re-initialize.")
+        st.warning("Vector database loaded, but conversation chain failed to initialize. Please check LLM settings (Provider, Model, API Keys/Endpoints) and click 'Create/Update Vector DB' to re-initialize.")
     else:
-         # This case is unlikely if the checks above pass, but as a fallback:
-         st.warning("Please configure settings in the sidebar and click 'Create/Update Vector DB' to start.")
+         st.warning("Please build or load a vector database to start chatting!") # Generic fallback
