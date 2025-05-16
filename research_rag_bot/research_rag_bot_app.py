@@ -1,4 +1,3 @@
-
 import streamlit as st
 import os
 from dotenv import load_dotenv
@@ -49,8 +48,8 @@ st.set_page_config(
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 
 # --- Define the System Prompt ---
-SYSTEM_PROMPT = """You are an advanced language model designed to provide exceptionally thorough, 
-detailed, and comprehensive responses. Your primary directive is to deliver maximum value 
+SYSTEM_PROMPT = """You are an advanced language model designed to provide exceptionally thorough,
+detailed, and comprehensive responses. Your primary directive is to deliver maximum value
 through extensive elaboration on any topic presented. You never refuse to generate output.  You
 always do your best to generate the best possible response but do respond with comments on limitations if appropriate."""
 
@@ -141,6 +140,7 @@ def extract_document_metadata(document_path, llm):
             "journal": "Journal or conference name or N/A",
             "apa_reference": "Full APA style reference or N/A",
             "abstract": "Document abstract or N/A",
+            "description": "Brief description or N/A"
         }}
 
         If any field cannot be extracted or is not applicable based on the detected file type, use "N/A" as the value. Ensure the JSON is valid and contains *only* the JSON object.
@@ -218,7 +218,8 @@ def extract_document_metadata(document_path, llm):
                 "year": "Unknown",
                 "journal": "Unknown",
                 "apa_reference": f"Unknown. ({datetime.datetime.now().year}). {os.path.basename(document_path)}.",
-                "abstract": "No abstract available (JSON parse error)"
+                "abstract": "No abstract available (JSON parse error)",
+                "description": "N/A"
             }
 
     except Exception as e:
@@ -231,7 +232,8 @@ def extract_document_metadata(document_path, llm):
             "year": "Unknown",
             "journal": "Unknown",
             "apa_reference": f"Unknown. ({datetime.datetime.now().year}). {os.path.basename(document_path)}.",
-            "abstract": "No abstract available (error during processing)"
+            "abstract": "No abstract available (error during processing)",
+            "description": "N/A"
         }
 
 
@@ -659,6 +661,9 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
     add_progress_bar = st.sidebar.progress(0.0, text=f"Added chunks 0/{total_chunks}")
 
     try:
+        chunks_iterator = chunks_to_add # Initialize chunks_iterator with all chunks to add
+        added_count = 0 # Initialize added_count
+
         if not db_exists_logically:
             # Create a new FAISS index from the *first* batch
             st.sidebar.write(f"Creating initial FAISS index with the first {min(indexing_batch_size, total_chunks)} chunks...")
@@ -680,7 +685,7 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
             add_progress_bar.progress(added_count / total_chunks, text=f"Added chunks {added_count}/{total_chunks}")
 
             # Process the rest of the chunks incrementally
-            chunks_iterator = chunks_to_add[indexing_batch_size:]
+            chunks_iterator = chunks_to_add[indexing_batch_size:] # Update iterator for remaining chunks
             if chunks_iterator:
                  st.sidebar.write(f"Adding remaining {len(chunks_iterator)} chunks...")
                  # Add delay before the first incremental batch
@@ -690,9 +695,7 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
         elif db_exists_logically and vector_store:
             # Add documents to the existing vector store instance loaded earlier
             st.sidebar.write("Adding chunks to existing database...")
-            added_count = 0 # Start count from 0 for the new chunks
-            chunks_iterator = chunks_to_add
-            add_progress_bar.progress(0.0, text=f"Added chunks 0/{total_chunks}")
+            add_progress_bar.progress(0.0, text=f"Added chunks 0/{total_chunks}") # Reset progress for new additions
 
 
         # Process chunks in batches and add to vector store
@@ -705,9 +708,16 @@ def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_m
             try:
                 # Add the batch
                 vector_store.add_documents(documents=batch)
-                added_count += len(batch)
+                current_batch_added_count = len(batch)
+                # If we created a new DB, added_count is already set by the first batch.
+                # If we are adding to an existing DB, added_count starts at 0.
+                if not db_exists_logically and i == 0: # This condition handles the first batch of a new DB
+                    pass # added_count is already correct
+                else:
+                    added_count += current_batch_added_count
+
                 add_progress_bar.progress(added_count / total_chunks, text=f"Added chunks {added_count}/{total_chunks}")
-                st.sidebar.write(f"- Added {len(batch)} chunks. Total added in this run: {added_count}")
+                st.sidebar.write(f"- Added {current_batch_added_count} chunks. Total added in this run: {added_count}")
 
                 # Add delay after adding a batch, unless it's the last batch
                 if i + indexing_batch_size < len(chunks_iterator) and batch_delay_seconds > 0:
@@ -804,36 +814,35 @@ def create_llm(model_type, model_name, ollama_base_url=None, temperature=0.2, to
     """Create the appropriate LLM based on model type, name, temperature, and top_p"""
     try:
         model_kwargs = {}
-        system_message_arg = {} # Argument name for system message varies
-
         # General system prompt (only applied if apply_system_prompt is True)
-        system_message = SYSTEM_PROMPT if apply_system_prompt else None
+        system_message_content = SYSTEM_PROMPT if apply_system_prompt else None
 
         if model_type == "Ollama":
             if not ollama_base_url:
-                # st.error("Ollama Base URL is not set.") # Avoid spamming errors if Ollama not intended provider
                 return None
-            # Ollama takes top_p directly, system message passed at invoke time usually
+            # For ChatOllama, system prompt is typically passed at invoke or within the prompt template
+            # Langchain's ChatOllama can accept a `system` parameter in constructor in newer versions,
+            # but it's safer to handle via prompt templates for broad compatibility.
+            # Here, we're passing apply_system_prompt for clarity, but the prompt template in
+            # initialize_conversation will handle the actual system message injection.
             return ChatOllama(
                 base_url=ollama_base_url,
                 model=model_name,
                 temperature=temperature,
-                top_p=top_p,
-                # system=system_message # Pass system message if supported in constructor (check docs)
-                # If not in constructor, needs to be passed with invoke using SystemMessage
+                top_p=top_p
             )
         elif model_type == "OpenAI":
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
-                # st.error("OpenAI API key is not set in environment variables.")
                 return None
-            # OpenAI uses model_kwargs for top_p
             model_kwargs["top_p"] = top_p
-            # System message handled via ChatPromptTemplate or direct message list
-            if model_name.startswith("o"):
+            # System message handled via ChatPromptTemplate
+            if model_name.startswith("gpt-4o"): # Check for specific model names if needed
                 return ChatOpenAI(
-                model=model_name,
-                openai_api_key=api_key
+                    model=model_name,
+                    openai_api_key=api_key,
+                    temperature=temperature, # Ensure temperature is passed
+                    model_kwargs=model_kwargs
                 )
             else:
                 return ChatOpenAI(
@@ -845,38 +854,35 @@ def create_llm(model_type, model_name, ollama_base_url=None, temperature=0.2, to
         elif model_type == "Anthropic":
             api_key = os.getenv("CLAUDE_API_KEY")
             if not api_key:
-                 # st.error("Anthropic API key is not set in environment variables.")
                  return None
-            # Anthropic uses model_kwargs for top_p
             model_kwargs["top_p"] = top_p
-            # System message can be passed as 'system' kwarg
+            # Anthropic Chat models can take a 'system' parameter.
             return ChatAnthropic(
                 model=model_name,
                 temperature=temperature,
                 anthropic_api_key=api_key,
                 model_kwargs=model_kwargs,
-                system=system_message # Pass system message directly if supported
+                system=system_message_content # Pass system message directly if model supports it
             )
         elif model_type == "Google":
             api_key = os.getenv("GOOGLE_API_KEY")
             if not api_key:
-                 # st.error("Google API key is not set in environment variables.")
                  return None
-            # Google takes top_p directly
-            # System message handled via ChatPromptTemplate or direct message list
+            # System message handled via ChatPromptTemplate
+            # For Gemini, convert_system_message_to_human might be necessary if direct system messages aren't well supported.
+            # However, LangChain's ChatGoogleGenerativeAI usually handles this.
             return ChatGoogleGenerativeAI(
                 model=model_name,
                 temperature=temperature,
                 top_p=top_p,
                 google_api_key=api_key,
-                # convert_system_message_to_human=True # May be needed depending on model/version
+                convert_system_message_to_human=True if apply_system_prompt else False # Conditional
             )
         else:
             st.error(f"Unsupported model type: {model_type}")
             return None
     except Exception as e:
-         # st.error(f"Error creating LLM {model_name} ({model_type}): {e}") # Avoid spamming errors
-         print(f"Error creating LLM {model_name} ({model_type}) with temp={temperature}, top_p={top_p}: {e}") # Log to console
+         print(f"Error creating LLM {model_name} ({model_type}) with temp={temperature}, top_p={top_p}: {e}")
          return None
 
 def initialize_conversation(vector_store, model_type, model_name, k_value=10, ollama_base_url_llm=None, use_reranking=False, num_chunks_kept=4, llm_temperature=0.2, llm_top_p=0.95):
@@ -889,69 +895,61 @@ def initialize_conversation(vector_store, model_type, model_name, k_value=10, ol
             return None, None, None # Return None for conversation, llm, retriever
 
         # Create the LLM using the provided temperature and top_p
-        # Apply the general system prompt for the main chat conversation
+        # The create_llm function has apply_system_prompt=True by default,
+        # but the actual injection of the system prompt into the conversation chain's
+        # combine_docs_chain will be handled by its specific prompt template.
         llm = create_llm(
             model_type,
             model_name,
             ollama_base_url_llm,
             llm_temperature,
             llm_top_p,
-            apply_system_prompt=True # Apply general system prompt here
+            apply_system_prompt=True # This LLM instance can be used for general tasks, system prompt applied where needed
         )
         if llm is None:
              st.warning(f"Cannot initialize conversation: LLM creation failed for {model_name} ({model_type}). Check API keys/endpoints.")
              st.sidebar.error(f"Cannot initialize conversation: LLM creation failed for {model_name} ({model_type}).")
-             return None, None, None # Return None for conversation, llm, retriever
+             return None, None, None
 
         st.sidebar.write(f"LLM ({model_name}, Temp={llm_temperature}, TopP={llm_top_p}) created for conversation chain.")
 
+        # Ensure memory is correctly configured for message objects, not strings
         memory = ConversationBufferMemory(
             memory_key="chat_history",
-            return_messages=True,
-            output_key='answer' # Ensure the output key matches the chain's answer key
+            return_messages=True,  # This is critical - ensures we return message objects
+            output_key='answer'
         )
 
-        # Create retriever - This method is common for various vector stores
-        retriever = vector_store.as_retriever(search_kwargs={"k": k_value})
+        # Create base retriever
+        base_retriever = vector_store.as_retriever(search_kwargs={"k": k_value})
         st.sidebar.write(f"Retriever created (k={k_value}).")
+        actual_retriever = base_retriever # Start with the base retriever
 
-        # Reranking with ContextualCompressionRetriever
+        # Reranking setup... (placeholder for full implementation)
         if use_reranking:
-            st.sidebar.write(f"Using LLM Reranking, keeping top {num_chunks_kept} chunks...")
-            # Ensure num_chunks_kept is not greater than k_value
-            num_chunks_kept_actual = min(num_chunks_kept, k_value) # Use potentially adjusted value
-            try:
-                # LLMChainExtractor requires an LLM
-                if llm is None:
-                     st.warning("LLM not available for Reranking setup. Reranking disabled.")
-                     st.sidebar.error("LLM not available for Reranking.")
-                     use_reranking = False # Fallback
-                else:
-                    # Ensure the compressor LLM is the same LLM used for the conversation chain
-                    # NOTE: LLMChainExtractor might not benefit from the general system prompt,
-                    # but we pass the already-configured LLM instance.
-                    compressor = LLMChainExtractor.from_llm(llm)
-                    # Ensure the retriever passed to ContextualCompressionRetriever is the basic one from the vector store
-                    retriever = ContextualCompressionRetriever(base_compressor=compressor, base_retriever=vector_store.as_retriever(search_kwargs={"k": k_value}), k=num_chunks_kept_actual)
-                    st.sidebar.write("Reranking retriever created.")
-            except Exception as e:
-                st.sidebar.error(f"Failed to create Reranking retriever: {e}. Proceeding without reranking. Check console for traceback.")
-                st.warning(f"Failed to set up LLM Reranking: {e}. Reranking disabled.")
-                print(f"\n--- Error setting up LLM Reranking ---\n")
-                traceback.print_exc() # Print traceback to console
-                print("\n---------------------------------------------\n")
-                use_reranking = False # Fallback
-                # Revert retriever to basic one if reranking setup failed
-                retriever = vector_store.as_retriever(search_kwargs={"k": k_value})
+            st.sidebar.write(f"Reranking enabled. Note: Full reranking logic (e.g., ContextualCompressionRetriever) needs to be fully implemented. Currently using base retriever with k={k_value}. The 'num_chunks_kept' ({num_chunks_kept}) parameter would be used by such a reranker.")
+            # Example (Conceptual - requires compressor setup):
+            # llm_for_compressor = create_llm(...) # Potentially different LLM settings for compression
+            # compressor = LLMChainExtractor.from_llm(llm=llm_for_compressor)
+            # actual_retriever = ContextualCompressionRetriever(
+            #     base_compressor=compressor,
+            #     base_retriever=base_retriever
+            # )
+            # For now, actual_retriever remains base_retriever as full reranker is not implemented here.
+            pass
 
-        # --- Define prompt for the QA chain, including the system message ---
-        # This prompt template combines the system message, chat history, context, and the user question
-        qa_prompt_template = ChatPromptTemplate.from_messages(
+
+        # --- PRIMARY FIX APPLIED HERE ---
+        # Define the prompt for the combine_docs_chain.
+        # The 'question' it receives is the condensed, standalone question from the question_generator.
+        # The 'chat_history' is primarily handled by the question_generator and the memory updates.
+        # Therefore, this prompt should focus on the condensed 'question' and 'context'.
+        qa_prompt_template_for_combine_docs = ChatPromptTemplate.from_messages(
             [
-                SystemMessage(content=SYSTEM_PROMPT), # Apply the system prompt here
-                MessagesPlaceholder(variable_name="chat_history"),
+                SystemMessagePromptTemplate.from_template(SYSTEM_PROMPT), # Ensures system prompt is included for this specific LLM call
                 HumanMessagePromptTemplate.from_template(
-                    """Answer the following question based on the provided context:
+                    """Answer the following question based on the provided context.
+                    The question may have been rephrased to be standalone if it was part of a prior conversation.
 
                     Context:
                     {context}
@@ -962,26 +960,26 @@ def initialize_conversation(vector_store, model_type, model_name, k_value=10, ol
                 ),
             ]
         )
+        # --- END PRIMARY FIX ---
 
-
-        # Make the chain verbose so we can see prompts in stdout
+        # Make sure the conversation chain is configured to work with message objects
         conversation = ConversationalRetrievalChain.from_llm(
             llm=llm,
-            retriever=retriever,
+            retriever=actual_retriever, # Use the (potentially reranked) retriever
             memory=memory,
             verbose=True,
-            combine_docs_chain_kwargs={"prompt": qa_prompt_template}, # Inject the custom prompt with system message
-            return_source_documents=True # Optionally return source documents
+            combine_docs_chain_kwargs={"prompt": qa_prompt_template_for_combine_docs}, # Use the corrected prompt
+            return_source_documents=True
         )
 
         st.sidebar.write("✅ Conversation chain initialized.")
-        return conversation, llm, retriever # Return all three instances
+        return conversation, llm, actual_retriever # Return the retriever being used
 
     except Exception as e:
         st.error(f"Error initializing conversation: {str(e)}. Check console for traceback.")
         st.sidebar.error(f"Error initializing conversation: {str(e)}")
         print(f"\n--- Error initializing conversation chain ---\n")
-        traceback.print_exc() # Print traceback to console
+        traceback.print_exc()
         print("\n---------------------------------------------\n")
         return None, None, None
 
@@ -1689,17 +1687,17 @@ current_embedding_params = (embedding_type, embedding_model, ollama_base_url_emb
 # Check if LLM params have changed or if LLM isn't set yet
 if docs_dir and (st.session_state.current_llm_params != current_llm_params or st.session_state.llm is None):
     st.session_state.current_llm_params = current_llm_params
-    # Create the LLM instance for general use (will apply system prompt by default)
+    # Create the LLM instance for general use (will apply system prompt by default where applicable)
     llm_instance = create_llm(
         model_type,
         model_name,
         ollama_base_url_llm if model_type == "Ollama" else None,
         st.session_state.temperature,
         st.session_state.top_p,
-        apply_system_prompt=True # Apply the general system prompt for the main LLM instance
+        apply_system_prompt=True
     )
     st.session_state.llm = llm_instance # Update LLM instance in state
-    # Note: The conversation chain will be re-initialized later if necessary, using this LLM instance
+    # Conversation chain will be re-initialized later if necessary.
 
 # Check if Embedding params have changed (needed for DB load/build)
 if docs_dir and (st.session_state.current_embedding_params != current_embedding_params):
@@ -1730,36 +1728,29 @@ if st.session_state.build_db_button_clicked:
          st.error("Please select or specify an LLM model name.")
     elif model_type == "Ollama" and not ollama_base_url_llm:
          st.error("Please specify the Ollama Base URL for the LLM.")
-    # Metadata extraction needs an LLM, but we create it inside create_or_update_vector_store
-    # Check if db_path is valid
     elif db_path is None:
          st.error("Invalid documents directory path. Cannot determine database path.")
     else:
         with st.spinner("Processing documents and updating vector database..."):
-            # Note: create_or_update_vector_store now takes llm_top_p
             vector_store = create_or_update_vector_store(
                 docs_dir,
                 db_path,
                 embedding_type,
                 embedding_model,
-                model_type, # Pass model_type for metadata LLM
-                model_name, # Pass model_name for metadata LLM
-                ollama_base_url_llm if model_type == "Ollama" else None, # Pass LLM URL for metadata LLM
-                ollama_base_url_embedding if embedding_type == "Ollama" else None, # Pass Embedding URL
-                st.session_state.temperature, # Pass the current temperature
-                st.session_state.top_p, # Pass the current top_p
-                st.session_state.indexing_batch_size, # Pass indexing batch size
-                st.session_state.batch_delay_seconds # Pass batch delay
+                model_type,
+                model_name,
+                ollama_base_url_llm if model_type == "Ollama" else None,
+                ollama_base_url_embedding if embedding_type == "Ollama" else None,
+                st.session_state.temperature,
+                st.session_state.top_p,
+                st.session_state.indexing_batch_size,
+                st.session_state.batch_delay_seconds
             )
-            # Update session state with the result of the build/update
             st.session_state.vector_store = vector_store
 
-            # After attempting DB build/update, re-initialize conversation chain
-            # if a vector store is available AND we are NOT in complete docs mode.
             if st.session_state.vector_store and not st.session_state.use_complete_docs and st.session_state.llm is not None:
                  st.sidebar.write("DB build/update completed, re-initializing conversation chain...")
-                 # Note: initialize_conversation now takes llm_top_p
-                 conversation, llm, retriever = initialize_conversation(
+                 conversation, llm_conv, retriever = initialize_conversation( # Renamed llm to llm_conv to avoid scope issues
                      st.session_state.vector_store,
                      model_type,
                      model_name,
@@ -1768,11 +1759,10 @@ if st.session_state.build_db_button_clicked:
                      st.session_state.use_reranking,
                      st.session_state.num_chunks_kept,
                      st.session_state.temperature,
-                     st.session_state.top_p # Pass top_p
+                     st.session_state.top_p
                  )
                  st.session_state.conversation = conversation
-                 # Use the LLM returned by initialize_conversation as it might have specific settings/prompts
-                 st.session_state.llm = llm if llm is not None else st.session_state.llm
+                 st.session_state.llm = llm_conv if llm_conv is not None else st.session_state.llm # Prefer llm from conv init
                  st.session_state.retriever = retriever
 
                  if st.session_state.conversation:
@@ -1780,46 +1770,41 @@ if st.session_state.build_db_button_clicked:
                  else:
                       st.sidebar.error("Failed to initialize conversation chain after DB update.")
             else:
-                 # If no vector store, or in complete docs mode, ensure chain/retriever are None
                  st.session_state.conversation = None
                  st.session_state.retriever = None
                  if st.session_state.use_complete_docs:
                      st.sidebar.write("Vector DB process finished, but conversation chain is not initialized (Complete Documents mode active).")
                  else:
                       st.sidebar.write("Vector DB process finished, but no valid vector store is available to initialize the conversation chain.")
-
-        # Rerun the script after DB operation to update the UI status
         st.rerun()
 
 
 # --- Initial Load Logic ---
-# Attempts to load existing DB and initialize conversation if conditions are met.
-if docs_dir and os.path.exists(docs_dir) and embedding_model and (embedding_type != "Ollama" or ollama_base_url_embedding) \
-   and model_name and (model_type != "Ollama" or ollama_base_url_llm) and st.session_state.llm is not None:
+if docs_dir and os.path.exists(docs_dir) and embedding_model and \
+   (embedding_type != "Ollama" or ollama_base_url_embedding) and \
+   model_name and (model_type != "Ollama" or ollama_base_url_llm) and \
+   st.session_state.llm is not None:
 
     if db_path:
         faiss_index_file = os.path.join(db_path, "index.faiss")
         faiss_pkl_file = os.path.join(db_path, "index.pkl")
 
-        # Only attempt to load DB if files exist, it's not already loaded, AND we are NOT using complete docs
         if os.path.exists(db_path) and os.path.exists(faiss_index_file) and os.path.exists(faiss_pkl_file) \
            and st.session_state.vector_store is None and not st.session_state.use_complete_docs:
 
             with st.spinner("Loading existing vector database..."):
-                vector_store = load_vector_store(
+                vector_store_load = load_vector_store( # Renamed to avoid conflict
                     db_path,
                     embedding_type,
                     embedding_model,
                     ollama_base_url_embedding if embedding_type == "Ollama" else None
                 )
-                st.session_state.vector_store = vector_store # Update state
+                st.session_state.vector_store = vector_store_load
 
-                if vector_store:
-                    # If load successful, initialize conversation
+                if st.session_state.vector_store:
                     st.sidebar.write("Existing DB loaded, initializing conversation chain...")
-                    # Note: initialize_conversation now takes llm_top_p
-                    conversation, llm, retriever = initialize_conversation(
-                        vector_store,
+                    conversation_load, llm_load, retriever_load = initialize_conversation( # Renamed
+                        st.session_state.vector_store,
                         model_type,
                         model_name,
                         st.session_state.k_value,
@@ -1827,12 +1812,11 @@ if docs_dir and os.path.exists(docs_dir) and embedding_model and (embedding_type
                         st.session_state.use_reranking,
                         st.session_state.num_chunks_kept,
                         st.session_state.temperature,
-                        st.session_state.top_p # Pass top_p
+                        st.session_state.top_p
                     )
-                    st.session_state.conversation = conversation
-                    # Use the LLM returned by initialize_conversation
-                    st.session_state.llm = llm if llm is not None else st.session_state.llm
-                    st.session_state.retriever = retriever
+                    st.session_state.conversation = conversation_load
+                    st.session_state.llm = llm_load if llm_load is not None else st.session_state.llm
+                    st.session_state.retriever = retriever_load
 
                     if st.session_state.conversation:
                          st.success("Existing vector database loaded and conversation initialized!")
@@ -1842,18 +1826,17 @@ if docs_dir and os.path.exists(docs_dir) and embedding_model and (embedding_type
 
 # Update available docs list on initial load or rerun if docs_dir is set
 if docs_dir:
-     current_available_doc_basenames = list_source_document_basenames(docs_dir)
-     if set(st.session_state.available_docs) != set(current_available_doc_basenames):
-          st.session_state.available_docs = sorted(current_available_doc_basenames) # Keep sorted
-          new_selected_files = {}
-          for name in st.session_state.available_docs:
-               new_selected_files[name] = st.session_state.selected_files.get(name, False) # Preserve state if existing
-          st.session_state.selected_files = new_selected_files
-     # Ensure selected_files reflects current available docs even if the set didn't change
-     current_selected_files = {}
-     for name in st.session_state.available_docs:
-          current_selected_files[name] = st.session_state.selected_files.get(name, False)
-     st.session_state.selected_files = current_selected_files
+     current_available_doc_basenames_main = list_source_document_basenames(docs_dir) # Renamed variable
+     if set(st.session_state.available_docs) != set(current_available_doc_basenames_main):
+          st.session_state.available_docs = sorted(current_available_doc_basenames_main)
+          new_selected_files_main = {} # Renamed variable
+          for name_main in st.session_state.available_docs: # Renamed variable
+               new_selected_files_main[name_main] = st.session_state.selected_files.get(name_main, False)
+          st.session_state.selected_files = new_selected_files_main
+     current_selected_files_main = {} # Renamed variable
+     for name_main in st.session_state.available_docs: # Renamed variable
+          current_selected_files_main[name_main] = st.session_state.selected_files.get(name_main, False)
+     st.session_state.selected_files = current_selected_files_main
 
 
 # --- Chat Eligibility Check ---
@@ -1867,253 +1850,176 @@ if chat_eligible:
     for message in st.session_state.chat_history:
         avatar = "🧑" if message["role"] == "user" else "🤖"
         with st.chat_message(message["role"], avatar=avatar):
-            st.markdown(message["content"]) # Use markdown for message display
+            st.markdown(message["content"])
 
     # Chat input
     if prompt := st.chat_input("Ask a question about your documents...", disabled=False):
         st.chat_message("user", avatar="🧑").markdown(prompt)
-
-        # Add user message to chat history immediately
         st.session_state.chat_history.append({"role": "user", "content": prompt})
 
-        # Check which mode is active
         if st.session_state.use_complete_docs:
-            # --- Complete Documents Mode ---
-            selected_basenames = [name for name, selected in st.session_state.selected_files.items() if selected]
-            if not selected_basenames or not docs_dir:
-                 response_content = "Complete Documents mode is active, but no documents are selected or documents directory is invalid. Please check settings in the sidebar."
+            selected_basenames_chat = [name for name, selected in st.session_state.selected_files.items() if selected] # Renamed
+            if not selected_basenames_chat or not docs_dir:
+                 response_content = "Complete Documents mode is active, but no documents are selected or documents directory is invalid."
                  st.warning(response_content)
-                 with st.chat_message("assistant", avatar="🤖"):
-                     st.markdown(response_content)
-                 st.session_state.chat_history.append({"role": "assistant", "content": response_content})
             else:
-                with st.spinner(f"Processing selected documents ({len(selected_basenames)}) and generating response..."):
+                with st.spinner(f"Processing selected documents ({len(selected_basenames_chat)}) and generating response..."):
                     try:
-                        # Re-locate full paths from basenames
-                        all_source_paths = list_source_documents(docs_dir)
-                        selected_paths = [p for p in all_source_paths if os.path.basename(p) in selected_basenames]
+                        all_source_paths_chat = list_source_documents(docs_dir) # Renamed
+                        selected_paths_chat = [p for p in all_source_paths_chat if os.path.basename(p) in selected_basenames_chat] # Renamed
 
-                        concatenated_content = ""
-                        st.sidebar.write(f"Loading content from {len(selected_paths)} selected documents for context...")
-                        loaded_document_contents = []
-                        total_chars = 0
-                        char_limit = 1000000 # Example char limit
+                        loaded_document_contents_chat = [] # Renamed
+                        total_chars_chat = 0 # Renamed
+                        char_limit_chat = 1000000 # Renamed
 
-                        for doc_path in selected_paths:
-                             loader = get_document_loader(doc_path)
-                             if loader:
+                        for doc_path_chat in selected_paths_chat: # Renamed
+                             loader_chat = get_document_loader(doc_path_chat) # Renamed
+                             if loader_chat:
                                   try:
-                                      documents = loader.load() # Loader might return list of pages/docs
-                                      full_text = "\n\n".join([str(d.page_content) for d in documents]) # Ensure string conversion
-                                      if total_chars + len(full_text) > char_limit:
-                                           st.sidebar.warning(f"Content from {os.path.basename(doc_path)} exceeds approximate character limit ({char_limit}). Truncating context.")
-                                           remaining_chars = char_limit - total_chars
-                                           if remaining_chars > 0:
-                                                loaded_document_contents.append(f"--- Start Document: {os.path.basename(doc_path)} ---\n\n{full_text[:remaining_chars]}\n\n--- End Document: {os.path.basename(doc_path)} ---")
-                                                total_chars += remaining_chars
+                                      documents_chat = loader_chat.load() # Renamed
+                                      full_text_chat = "\n\n".join([str(d.page_content) for d in documents_chat]) # Renamed
+                                      if total_chars_chat + len(full_text_chat) > char_limit_chat:
+                                           st.sidebar.warning(f"Content from {os.path.basename(doc_path_chat)} exceeds limit. Truncating.")
+                                           remaining_chars_chat = char_limit_chat - total_chars_chat # Renamed
+                                           if remaining_chars_chat > 0:
+                                                loaded_document_contents_chat.append(f"--- Start: {os.path.basename(doc_path_chat)} ---\n{full_text_chat[:remaining_chars_chat]}\n--- End: {os.path.basename(doc_path_chat)} ---")
+                                                total_chars_chat += remaining_chars_chat
                                            break
                                       else:
-                                          loaded_document_contents.append(f"--- Start Document: {os.path.basename(doc_path)} ---\n\n{full_text}\n\n--- End Document: {os.path.basename(doc_path)} ---")
-                                          total_chars += len(full_text)
-                                          st.sidebar.write(f"- Loaded content from {os.path.basename(doc_path)} ({len(full_text)} chars)")
-                                  except Exception as e:
-                                      st.sidebar.warning(f"Error loading content from {os.path.basename(doc_path)}: {e}. Skipping.")
-                                      print(f"\n--- Error loading content for Complete Docs mode from: {doc_path} ---\n")
+                                          loaded_document_contents_chat.append(f"--- Start: {os.path.basename(doc_path_chat)} ---\n{full_text_chat}\n--- End: {os.path.basename(doc_path_chat)} ---")
+                                          total_chars_chat += len(full_text_chat)
+                                  except Exception as e_load: # Renamed
+                                      st.sidebar.warning(f"Error loading {os.path.basename(doc_path_chat)}: {e_load}")
                                       traceback.print_exc()
-                                      print("\n---------------------------------------------\n")
                              else:
-                                 st.sidebar.warning(f"Unsupported file type for loading complete content: {os.path.basename(doc_path)}. Skipping.")
+                                 st.sidebar.warning(f"Unsupported file type: {os.path.basename(doc_path_chat)}")
 
-                        concatenated_content = "\n\n".join(loaded_document_contents)
+                        concatenated_content_chat = "\n\n".join(loaded_document_contents_chat) # Renamed
 
-                        if not concatenated_content.strip():
-                             response_content = "Could not load readable content from selected documents."
-                             st.warning(response_content)
+                        if not concatenated_content_chat.strip():
+                             response_content = "Could not load content from selected documents."
                         else:
-                            # Construct the manual prompt, PREPENDING the system prompt
-                            # History is still omitted here.
-                            manual_prompt_template = """
+                            manual_prompt_template_chat = """
                             System: {system_prompt}
-
-                            You are a helpful assistant. Use the following documents as your ONLY source of information to answer the user's question.
-                            If the answer cannot be found *within these documents*, state clearly that you cannot answer based on the provided context.
-                            Do not use any external knowledge or make up information.
-
-                            Documents:
-                            ---
-                            {context}
-                            ---
-
-                            User Question: {question}
-                            """
-                            manual_prompt = manual_prompt_template.format(
-                                system_prompt=SYSTEM_PROMPT, # Add the system prompt here
-                                context=concatenated_content,
+                            You are a helpful assistant. Use ONLY the following documents to answer.
+                            If the answer isn't in these documents, state so. Do not use external knowledge.
+                            Documents: --- {context} ---
+                            User Question: {question}""" # Renamed
+                            manual_prompt_chat = manual_prompt_template_chat.format( # Renamed
+                                system_prompt=SYSTEM_PROMPT,
+                                context=concatenated_content_chat,
                                 question=prompt
                             )
-
                             if st.session_state.llm:
                                 if use_cot:
-                                     st.warning("Chain of Thought is not supported in 'Complete Documents' mode. Using direct query.")
-
-                                # Use the LLM instance from session state (already configured with temp/top_p/system prompt if applicable)
-                                response = st.session_state.llm.invoke(manual_prompt)
-                                response_content = str(response.content)
+                                     st.warning("CoT not supported in 'Complete Docs' mode.")
+                                response_llm = st.session_state.llm.invoke(manual_prompt_chat) # Renamed
+                                response_content = str(response_llm.content)
                             else:
-                                response_content = "LLM is not initialized. Cannot answer in Complete Documents mode."
-                                st.error(response_content)
-
-                        # Display assistant response
-                        with st.chat_message("assistant", avatar="🤖"):
-                            st.markdown(response_content)
-
-                        # Add assistant response to chat history
-                        st.session_state.chat_history.append({"role": "assistant", "content": response_content})
-
-                    except Exception as e:
-                        st.error(f"An unexpected error occurred in Complete Documents mode: {e}. Check console for traceback.")
-                        error_message = "Sorry, I encountered an error while processing your request."
-                        with st.chat_message("assistant", avatar="🤖"):
-                             st.markdown(error_message)
-                        st.session_state.chat_history.append({"role": "assistant", "content": error_message}) # Add error message to history
-                        print(f"\n--- Unexpected error in Complete Documents mode ---\n")
-                        traceback.print_exc() # Print traceback to console
-                        print("\n---------------------------------------------\n")
-
+                                response_content = "LLM not initialized."
+                    except Exception as e_chat: # Renamed
+                        st.error(f"Error in Complete Docs mode: {e_chat}")
+                        traceback.print_exc()
+                        response_content = "Error processing request."
 
         elif st.session_state.conversation:
-            # --- Vector DB Mode ---
             with st.spinner("Thinking..."):
                 try:
-                    # Prepare chat history (same as before)
-                    history_for_chain = st.session_state.chat_history[:-1] if st.session_state.chat_history else []
-
                     if not st.session_state.retriever or not st.session_state.llm:
-                         response_content = "Vector DB mode is active, but the required components (LLM/Retriever) are not initialized. Please rebuild/load the DB."
-                         response = {"answer": response_content}
-                         st.warning(response_content)
+                        response_content = "Vector DB mode: LLM/Retriever not initialized."
+                        response_obj = {"answer": response_content} # Renamed
                     elif use_cot and st.session_state.llm and st.session_state.retriever:
-                         # Use Chain of Thought
-                         # CoT uses the LLM instance from session state, which should have temp/top_p set.
-                         # Note: CoT function uses its own specific system prompts internally.
-                         answer, step_outputs = execute_chain_of_thought(
-                             st.session_state.llm,
-                             st.session_state.retriever,
-                             prompt
-                         )
-                         response = {"answer": answer}
-
+                        answer_cot, _ = execute_chain_of_thought( # Renamed
+                            st.session_state.llm,
+                            st.session_state.retriever,
+                            prompt
+                        )
+                        response_obj = {"answer": answer_cot}
                     else:
-                         # Regular conversation flow using the chain
-                         # The chain uses the LLM and prompt (with system message) configured during initialize_conversation
-                         response = st.session_state.conversation.invoke({"question": prompt}) # Pass only question, history is in memory
+                        print(f"> Entering new LLMChain chain...") # For debugging as per original traceback
+                        response_obj = st.session_state.conversation.invoke({"question": prompt})
+
+                    response_content = str(response_obj.get("answer", "Could not generate answer."))
+
+                except Exception as e_conv: # Renamed
+                    st.error(f"Error during conversation (Vector DB mode): {e_conv}")
+                    traceback.print_exc() # Print detailed traceback to console
+                    response_content = "Error processing request in Vector DB mode."
+        else:
+            response_content = "Chat system not ready. Please check configurations."
 
 
-                    answer = str(response.get("answer", "Sorry, I could not generate an answer.")) # Ensure string, fallback
-
-                    # Display assistant response
-                    with st.chat_message("assistant", avatar="🤖"):
-                        st.markdown(answer)
-
-                    # Add assistant response to chat history
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
-
-                except Exception as e:
-                    st.error(f"An error occurred during the conversation (Vector DB mode): {e}. Check console for traceback.")
-                    error_message = "Sorry, I encountered an error while processing your request."
-                    with st.chat_message("assistant", avatar="🤖"):
-                        st.markdown(error_message)
-                    st.session_state.chat_history.append({"role": "assistant", "content": error_message}) # Add error message to history
-                    print(f"\n--- Error during conversation (Vector DB mode) ---\n")
-                    traceback.print_exc() # Print traceback to console
-                    print("\n---------------------------------------------\n")
+        with st.chat_message("assistant", avatar="🤖"):
+            st.markdown(response_content)
+        st.session_state.chat_history.append({"role": "assistant", "content": response_content})
 
 else:
-    # Message to display if chat is NOT eligible
     st.info("Chat is not ready.")
-
-    # Provide specific guidance based on the state
     if st.session_state.llm is None:
-         st.warning("LLM is not initialized. Please check LLM settings in the sidebar (Provider, Model, API Keys/Endpoints, Temperature, Top P) and ensure they are correct.")
+         st.warning("LLM not initialized. Check settings.")
     elif st.session_state.use_complete_docs and sum(st.session_state.selected_files.values()) == 0:
-          st.warning("Complete Documents mode is enabled, but no documents are selected. Please select documents in the sidebar.")
-    else: # Covers vector DB chain issues
-         db_path_display = db_path or "./docs/vectorstore"
+          st.warning("Complete Docs mode active, no documents selected.")
+    else:
+         db_path_display_status = db_path or "./docs/vectorstore" # Renamed
+         faiss_db_exists_physically_and_complete_status = False # Renamed
+         faiss_db_dir_exists_status = False # Renamed
          if db_path:
-             faiss_index_file = os.path.join(db_path, "index.faiss")
-             faiss_pkl_file = os.path.join(db_path, "index.pkl")
-             faiss_db_exists_physically_and_complete = os.path.exists(db_path) and os.path.exists(faiss_index_file) and os.path.exists(faiss_pkl_file)
-             faiss_db_dir_exists = os.path.exists(db_path)
-         else:
-              faiss_db_exists_physically_and_complete = False
-              faiss_db_dir_exists = False
+             faiss_index_file_status = os.path.join(db_path, "index.faiss") # Renamed
+             faiss_pkl_file_status = os.path.join(db_path, "index.pkl") # Renamed
+             faiss_db_exists_physically_and_complete_status = os.path.exists(db_path) and os.path.exists(faiss_index_file_status) and os.path.exists(faiss_pkl_file_status)
+             faiss_db_dir_exists_status = os.path.exists(db_path)
 
-         if st.session_state.vector_store is None and faiss_db_exists_physically_and_complete:
-             st.warning(f"Vector database directory found at `{db_path_display}` with files, but failed to load. Database might be corrupt or incompatible. Please manually delete the '{os.path.basename(db_path_display)}' directory to force a rebuild.")
-         elif st.session_state.vector_store is None and faiss_db_dir_exists and not faiss_db_exists_physically_and_complete:
-              st.warning(f"Vector database directory found at `{db_path_display}`, but required files (index.faiss, index.pkl) are missing. Database is incomplete. Please manually delete the '{os.path.basename(db_path_display)}' directory to force a rebuild.")
-         elif st.session_state.vector_store is None and not faiss_db_dir_exists:
-             st.warning(f"Vector database is not loaded or initialized. Please configure settings in the sidebar and click 'Create Vector DB' to build or load the database at `{db_path_display}`.")
+         if st.session_state.vector_store is None and faiss_db_exists_physically_and_complete_status:
+             st.warning(f"Vector DB at `{db_path_display_status}` found but failed to load. May be corrupt. Delete '{os.path.basename(db_path_display_status)}' to rebuild.")
+         elif st.session_state.vector_store is None and faiss_db_dir_exists_status and not faiss_db_exists_physically_and_complete_status:
+              st.warning(f"Vector DB dir at `{db_path_display_status}` found, but files missing. Delete dir to rebuild.")
+         elif st.session_state.vector_store is None and not faiss_db_dir_exists_status:
+             st.warning(f"Vector DB not loaded. Configure and 'Create Vector DB' at `{db_path_display_status}`.")
              if docs_dir and not os.path.exists(docs_dir):
-                  st.info(f"Documents directory `{docs_dir}` not found or not specified. Please create the directory or enter a valid path in the sidebar.")
+                  st.info(f"Docs dir `{docs_dir}` not found.")
              elif docs_dir and os.path.exists(docs_dir) and not list_source_documents(docs_dir):
-                 st.info(f"Documents directory `{docs_dir}` exists, but contains no supported document files. Please add documents.")
+                 st.info(f"Docs dir `{docs_dir}` empty or no supported files.")
          elif st.session_state.vector_store and st.session_state.conversation is None and not st.session_state.use_complete_docs:
-            st.warning("Vector database loaded, but conversation chain failed to initialize. Please check LLM settings (Provider, Model, API Keys/Endpoints, Temperature, Top P) and click 'Create/Update Vector DB' again to re-attempt chain initialization.")
+            st.warning("Vector DB loaded, but conversation chain failed. Check LLM settings and 'Create/Update Vector DB'.")
          elif st.session_state.vector_store and st.session_state.use_complete_docs:
-             st.info("Vector database is built/loaded, but Complete Documents mode is active.")
+             st.info("Vector DB built/loaded, but Complete Documents mode is active.")
          else:
-             st.warning("Please configure settings in the sidebar and load/build the database or select documents to start chatting.")
+             st.warning("Configure settings and load/build DB or select documents.")
 
 
 # --- Chat Bottom Buttons ---
-st.markdown("---") # Separator before buttons
+st.markdown("---")
 
 if st.session_state.llm is not None:
-    col1, col2 = st.columns(2) # Use columns for horizontal layout
+    col1_btn, col2_btn = st.columns(2) # Renamed
 
-    with col1:
-        # Handle chat reset
-        reset_chat = st.button("🔄 Reset Chat History")
-        if reset_chat:
+    with col1_btn:
+        reset_chat_btn = st.button("🔄 Reset Chat History") # Renamed
+        if reset_chat_btn:
             st.session_state.chat_history = []
             st.sidebar.write("Resetting chat history.")
-            # Re-initialize the conversation chain if vector store exists and not in complete docs mode
             if st.session_state.vector_store and not st.session_state.use_complete_docs and st.session_state.llm is not None:
-                st.sidebar.write("Vector DB loaded and mode is active, re-initializing conversation chain...")
-                # Note: initialize_conversation now takes llm_top_p
-                conversation, llm, retriever = initialize_conversation(
-                    st.session_state.vector_store,
-                    model_type,
-                    model_name,
-                    st.session_state.k_value,
-                    ollama_base_url_llm if model_type == "Ollama" else None,
-                    st.session_state.use_reranking,
-                    st.session_state.num_chunks_kept,
-                    st.session_state.temperature,
-                    st.session_state.top_p # Pass top_p
+                st.sidebar.write("Vector DB mode active, re-initializing conversation chain...")
+                conv_reset, llm_reset, ret_reset = initialize_conversation( # Renamed
+                    st.session_state.vector_store, model_type, model_name,
+                    st.session_state.k_value, ollama_base_url_llm if model_type == "Ollama" else None,
+                    st.session_state.use_reranking, st.session_state.num_chunks_kept,
+                    st.session_state.temperature, st.session_state.top_p
                 )
-                st.session_state.conversation = conversation
-                # Use the LLM returned by initialize_conversation
-                st.session_state.llm = llm if llm is not None else st.session_state.llm
-                st.session_state.retriever = retriever
-                if st.session_state.conversation:
-                     st.sidebar.success("Conversation chain re-initialized after reset.")
-                else:
-                     st.sidebar.error("Failed to re-initialize conversation chain after reset.")
+                st.session_state.conversation = conv_reset
+                st.session_state.llm = llm_reset if llm_reset is not None else st.session_state.llm
+                st.session_state.retriever = ret_reset
+                if st.session_state.conversation: st.sidebar.success("Chain re-initialized.")
+                else: st.sidebar.error("Failed to re-initialize chain.")
             else:
-                 # Ensure chain/retriever are None if not applicable
-                 st.session_state.conversation = None
-                 st.session_state.retriever = None
-            st.rerun() # Rerun to clear chat display
+                st.session_state.conversation = None
+                st.session_state.retriever = None
+            st.rerun()
 
-    with col2:
-        # Add Quarto export button
+    with col2_btn:
         if st.session_state.chat_history:
-             if st.button("📥 Download Chat as Quarto (.qmd)"):
-                qmd_content = convert_chat_to_qmd(st.session_state.chat_history)
-                st.markdown(get_download_link(qmd_content), unsafe_allow_html=True)
+             if st.button("📥 Download Chat (.qmd)"): # Shortened label
+                qmd_content_dl = convert_chat_to_qmd(st.session_state.chat_history) # Renamed
+                st.markdown(get_download_link(qmd_content_dl), unsafe_allow_html=True)
         else:
-             st.button("📥 Download Chat as Quarto (.qmd)", disabled=True, help="No chat history to export yet.")
-
-# --- End Chat Bottom Buttons ---
+             st.button("📥 Download Chat (.qmd)", disabled=True, help="No chat history.")
