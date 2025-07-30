@@ -23,4 +23,4 @@ The output must be pure JSON without any markdown fencing.  Escape any special c
 The output must be JSON only.  Do not include any additional information of any kind.
 Don't nest JSON inside the question, answer or reference attributes.
 Replace any non-ASCII or special characters with LaTeX (preferred) or simple text equivalent.
-You must properly escape any markdown characters that are not allowed in raw JSON.
+You must properly escape any markdown characters that are not allowed in raw JSON.  If you are outputting LaTeX, ensure the backslashes are escaped as double backslashes.
