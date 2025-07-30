@@ -1,0 +1,54 @@
+{
+  "pairs": [
+    {
+      "question": "What is the primary future research direction suggested for the developed VT-CPPC-SAFT model?",
+      "answer": "The proposed strategy, which involves a modified temperature-dependent volume translation model within the PC-SAFT equation of state, can be extended to model the thermodynamic properties of other pure compounds beyond carbon dioxide.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What is an identified knowledge gap and necessary future task for SAFT-type Equation of State (EOS) models regarding comprehensive thermodynamic property prediction?",
+      "answer": "There is a need for the development of a SAFT-type EOS model that can provide a simultaneous and accurate description of a whole set of thermodynamic properties. This includes not only density but also first and second-order thermodynamic derivative properties (e.g., speed of sound, isobaric expansivity, and isothermal compressibility).",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What specific thermodynamic consistency issue was identified for the VT-CPPC-SAFT model that limits its application range?",
+      "answer": "A 'crossover issue,' where calculated pressure-volume isotherms intersect, was observed at very high pressures (specifically above 90.980 MPa or 12.335 Pc for CO2) in the temperature range of 0.85 Tc - 0.9 Tc. This phenomenon limits the safe application range of the proposed model.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What is recommended to address numerical pitfalls in SAFT-type EOS models, particularly concerning thermodynamic consistency at high pressures?",
+      "answer": "More attention should be paid to numerical pitfalls, such as the crossing of isotherms, especially when applying these models at extremely high pressures, to ensure and extend their thermodynamic consistency.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What existing criterion is suggested as a follow-up study to analyze the thermodynamic consistency of the VT-CPPC-SAFT model or other SAFT-type EOSs?",
+      "answer": "The criterion developed by Shi and Li (2016) for determining crossover phenomena in volume-translated Cubic Equations of State (CEOS) can also be applied to SAFT-type EOSs to assess their consistent prediction of PVT (pressure, volume, temperature) relations over a wide range.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What was a significant limitation of original SAFT-type Equations of State (EOSs) that motivated the research presented in this paper?",
+      "answer": "Conventional SAFT-type EOSs failed to accurately reproduce the critical pressure and critical temperature of pure compounds, often significantly overestimating these values, which led to inaccurate predictions of thermophysical properties near the critical region.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What specific challenge did the critical-point PC-SAFT (CPPC-SAFT) model face despite its ability to reproduce critical points accurately?",
+      "answer": "While CPPC-SAFT could exactly reproduce experimental critical points, it did so at the expense of sacrificing the accuracy of liquid-density predictions. It showed a significant overestimation of saturated liquid molar volume and provided inaccurate representations of isotherms, especially in the liquid and supercritical phases.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "Why was the introduction of a fourth parameter, specifically volume translation, considered indispensable for improving the accuracy of SAFT-type EOS models?",
+      "answer": "The introduction of a fourth parameter, such as volume translation, became necessary because three-parameter SAFT-type EOSs, even when re-parameterized to accurately reproduce critical points, could not simultaneously provide accurate predictions of liquid density. Volume translation offers an additional degree of freedom to correct molar volume predictions without altering vapor pressure calculations.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What limitations were observed in previous constant or linear temperature-dependent volume translation models when applied to SAFT-type EOSs, particularly near the critical region?",
+      "answer": "Constant volume translation models (e.g., in I-PC-SAFT) could not achieve accurate liquid density predictions, especially near the critical region. While linear temperature-dependent models could improve density descriptions for some compounds (like ionic liquids), they often failed to simultaneously reproduce critical temperature and critical pressure.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "Beyond inaccurate liquid density, what are identified challenges of Cubic Equations of State (CEOS) for thermodynamic modeling of various substances?",
+      "answer": "CEOS models, due to employing a universal critical compressibility factor, generally provide inaccurate predictions of thermodynamic properties for complex mixtures and frequently fail to model the multiphase equilibria of polar, highly asymmetric, and associated mixtures.",
+      "reference": "Shi, J., & Li, H. (2022). Modiﬁed temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, 263, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    }
+  ]
+}

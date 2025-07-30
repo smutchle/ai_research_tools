@@ -1,0 +1,104 @@
+{
+  "pairs": [
+    {
+      "question": "What general approach was taken for model validation in this study?",
+      "answer": "The study conducted a comparative analysis to investigate the prediction capabilities of the Pitzer model and the ePC-SAFT equation of state for salt solubility, equilibrium, and volumetric properties in \"Formation\" water. This involved several validation and comparison steps for reliable implementation of both models against experimental data from available literature.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What specific properties were predicted and validated for single-salt solutions using the models?",
+      "answer": "For single-salt solutions, the models were used to predict and validate solubility, brine densities, and vapor pressures.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "How was the ePC-SAFT model's accuracy quantified for liquid density predictions of single-salt solutions?",
+      "answer": "The average relative deviation for liquid density prediction for single-salt solutions was quantified as: 1.13% for NaBr, 0.70% for KCl, 1.02% for NaCl, and 0.36% for Na2SO4.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What validation was performed for vapor pressure predictions in multi-salt mixtures using ePC-SAFT?",
+      "answer": "For mixtures of NaCl and KBr, the average relative deviation from experimental data for vapor pressure was 0.75%, and for mixtures of NaBr and KCl, it was 0.74%, across systems with different concentrations. This indicates validation against experimental data for mixed-salt systems.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What method was used to optimize ePC-SAFT parameters, and what was its impact on strontium ion predictions?",
+      "answer": "A stochastic regression procedure, specifically Simulated Annealing, was presented and used to evaluate and optimize the ePC-SAFT parameters for strontium ions. This optimization significantly improved the average relative deviation for mean ionic activity coefficients for various strontium salts from experimental data, reducing deviations from the 15-25% range (using previous parameters) to 6.98-10.13% (using the newly regressed parameters).",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What types of experimental data were used for validating the Pitzer model, and from what sources?",
+      "answer": "The Pitzer model was validated against various experimental and calculated data from literature, including: solubility and activity coefficients of aqueous NaCl from Silvester and Pitzer [19]; solubilities and activity coefficients of alkaline chlorides, bromides, and sulfates from Krumgalz [20, 21]; saturation concentrations for several types of salts from Christov [22]; and solubility diagrams of two-salt systems from Thomsen [16], Christov [23], and experimental data from Farelo et al. [24].",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "How was the computational implementation of the Pitzer model specifically verified?",
+      "answer": "The implementation was verified by comparing its calculated saturation molalities (solubility) and corresponding activity coefficients against previously published calculations by Silvester and Pitzer [19] across a range of temperatures (273.15 K to 398.15 K). Small relative deviations confirmed correct equilibrium calculation. The model's numerical techniques were also evaluated.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What computational procedures are detailed for the ePC-SAFT model that contribute to reproducibility?",
+      "answer": "The paper details the iterative procedure for determining density by adjusting reduced density (η) until the calculated pressure matches the system pressure. It also describes the procedure for calculating vapor pressures of aqueous solutions using fugacity equivalency between liquid and vapor phases (shown in Fig. 4). Additionally, the objective function and Simulated Annealing algorithm for parameter optimization are provided.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What specific experimental data were used to validate the ePC-SAFT model, beyond solubility?",
+      "answer": "The ePC-SAFT model's validity was evaluated against: vapor pressures of mixtures of NaCl and KBr, and NaBr and KCl, using experimental data from Hsu et al. [31]; liquid densities of aqueous KCl, NaCl, NaBr, and Na2SO4 at 333.15 K and 1 bar, using experimental data from D'Ans et al. [32]; and mean ionic activity coefficients (MIAC) for strontium chloride, bromide, iodide, nitrate, and perchlorate against experimental data from Rard and Miller [38].",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "How was the consistency of the ePC-SAFT model's implementation confirmed with respect to published deviations?",
+      "answer": "For aqueous mixtures of NaCl and KBr, the average deviation percent of calculated results using ePC-SAFT parameters from Cameretti et al. [29] matched the deviations reported by Cameretti et al. [29] (3.18%), which the authors state is \"an indication of correct implementation in our work.\" Similar consistency was found for NaBr and KCl mixtures.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What information is provided regarding the parameters used in the models?",
+      "answer": "**Pitzer Model Parameters:** General parameters are stated to be from Prausnitz et al. [17]. Specific single electrolyte parameters are provided in Appendix A (Table 15), taken from Christov [22], and for calcium, strontium, and barium sulfate from Krumgalz [20, 21].\n\n**ePC-SAFT Model Parameters:** Pure-component parameters for water are listed in Appendix B (Table 16) from Held et al. [1], with a temperature-dependent segment diameter. Parameters for other ions are from Held et al. [1] (Table 17). Newly regressed parameters for the strontium ion and binary interaction coefficients with anions are explicitly provided in Table 13 and Table 14.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "How do the authors conclude on the comparative performance and advantages of the two models regarding volumetric calculations?",
+      "answer": "Both models demonstrated acceptable prediction accuracy for solubility, but only the ePC-SAFT model was capable of accurately calculating vapor pressure and liquid density of salt solutions, a capability the Pitzer model lacks. This makes ePC-SAFT \"more general\" for volumetric calculations.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What specific metric was used to quantify deviations between calculated and experimental results for both models?",
+      "answer": "The \"Dev%\" was used for comparing single-salt saturation concentrations and activity coefficients, calculated as |(Ψ_ref - Ψ_calc) / Ψ_ref| * 100. For aqueous mixtures, the Average Relative Deviation (ARD%) was used, calculated as 100 * (1/NP) * Sum(|(y_exp,k - y_cal,k) / y_exp,k|).",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "Is there any mention of raw experimental data generated by the authors, or how data used for validation is made available?",
+      "answer": "The paper is a modeling study and does not generate new raw experimental data. All data used for validation are explicitly stated to be \"from available literature\" and specific references are provided for each dataset (e.g., [19], [20], [21], [22], [24], [31], [32], [38]). This means the data is available through those published sources, not through novel repositories created by the authors.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What information is provided about code sharing or replication protocols for the computational models?",
+      "answer": "The paper provides detailed algorithmic descriptions and flowcharts (e.g., for solubility prediction, vapor pressure calculation, and parameter optimization). It outlines the mathematical equations, specific numerical methods (Newton-Raphson, central differencing, simulated annealing), and the objective function used for parameter regression. However, there is no mention of code sharing platforms (like GitHub, GitLab, or Zenodo for code), or specific replication protocols such as Standard Operating Procedures (SOPs) or virtual environments (e.g., Docker containers).",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What quality control measures are discussed for the modeling results or the underlying parameters?",
+      "answer": "While there are no explicit \"quality control measures\" in the traditional sense of experimental wet-lab QC, the study employs rigorous checks for the quality of its modeling results and parameters:\n-   **Verification of Implementation:** The authors explicitly state goals for \"correct implementation\" of the Pitzer model and \"evaluation of numerical techniques.\"\n-   **Quantitative Deviation Metrics:** The consistent use of \"Dev%\" and ARD% provides a quantitative measure of accuracy against established reference data.\n-   **Matching Literature Deviations:** The calculated deviations for ePC-SAFT matching those reported by previous authors (e.g., Cameretti et al. [29]) served as an \"indication of correct implementation.\"\n-   **Parameter Optimization:** The sophisticated \"stochastic regression procedure\" using Simulated Annealing for ePC-SAFT parameters (especially for strontium) aims to ensure the quality and accuracy of these critical inputs to the model.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "How did the authors use external literature for validation of the ePC-SAFT parameters themselves?",
+      "answer": "The ePC-SAFT model was validated using parameters from two external literature sources (Held et al. [1] and Cameretti et al. [29]). The authors explicitly compare the predictive accuracy using these different parameter sets and conclude that \"ePC-SAFT parameters of Held et al. [1] give more accurate predictions than those from Cameretti et al. [29].\" This demonstrates a critical evaluation of existing parameter sets.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "What are the primary contributions of this work related to model validation and parameter determination?",
+      "answer": "The primary contributions include:\n1.  Studying the accuracy of ePC-SAFT compared to the Pitzer model and experimental data, using efficient numerical solution approaches for various property calculations.\n2.  Presenting an effective approach to determine ePC-SAFT parameters and demonstrating its improvement by obtaining considerably improved parameters for the strontium ion.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "Does the paper discuss any limitations of the Pitzer model that ePC-SAFT addresses?",
+      "answer": "Yes, the paper highlights that the Pitzer model cannot calculate changes in volumetric properties of solutions (like density), nor can it directly determine pressure-dependency of activity coefficients. These limitations are addressed by the ePC-SAFT model, which can calculate solution density, saturation pressure, and supersaturation concentrations.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    },
+    {
+      "question": "How does the study's approach to validation contribute to research rigor and transparency?",
+      "answer": "**Rigor:** The study demonstrates high rigor through:\n-   **Systematic Validation:** Both models are rigorously validated against a wide array of experimental data from diverse and well-established literature sources for multiple properties and mixture types.\n-   **Quantitative Metrics:** Consistent use of quantitative metrics (Dev%, ARD%) provides objective measures of model performance.\n-   **Computational Detail:** Detailed descriptions of numerical algorithms (Newton-Raphson, Simulated Annealing) and flowcharts enhance the computational rigor, allowing others to understand the inner workings of the models.\n-   **Parameter Optimization:** The novel parameter optimization procedure for ePC-SAFT demonstrates a commitment to improving model accuracy.\n\n**Transparency:** The study enhances transparency by:\n-   **Full Citation of Data Sources:** All experimental data used for validation are precisely referenced to published literature, making the underlying data discoverable.\n-   **Disclosure of Model Parameters:** Both original and newly regressed model parameters are explicitly listed in tables within the appendices or main text, which is critical for replication.\n-   **Methodological Openness:** Detailed descriptions of the computational methods and objective functions for optimization are provided, making the methodology clear.\n-   **Acknowledgment of Limitations:** The paper openly discusses the advantages and disadvantages of each model and acknowledges areas where ePC-SAFT's accuracy could be further improved with parameter adjustment, promoting an honest scientific discourse.\n\n**Areas for further transparency (not present in the paper):** While the paper provides strong methodological and data source transparency, the absence of public code repositories (e.g., GitHub) is a missed opportunity for full computational reproducibility, which is a modern best practice.",
+      "reference": "Barzinejad, I., Assareh, M., & Dehghani, M. R. (2020). A Comparative Study for Application of Pitzer and ePC-SAFT Equations to Predict Volumetric and Saturation Properties in \"Formation\" Water. Journal of Solution Chemistry, 49(7), 971-993. https://doi.org/10.1007/s10953-020-01005-y"
+    }
+  ]
+}

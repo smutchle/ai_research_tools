@@ -1,0 +1,104 @@
+{
+  "pairs": [
+    {
+      "question": "What information is provided to support the overall reproducibility of the research findings?",
+      "answer": "The study extensively details the mathematical formulation of the proposed VT-CPPC-SAFT EOS (Equations 1-5) and the objective function (Equation 6) used for parameter regression. All regressed model parameters (m, r, e/k for PC-SAFT and A, B, C for the volume translation) are explicitly provided in Table 2, allowing for direct implementation and replication of the model. Experimental data from the NIST Chemistry WebBook (Linstrom and Mallard, 2005) served as the primary data source for both parameter regression and validation, ensuring publicly accessible reference data.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "Are novel datasets generated and deposited in public repositories, or is existing data utilized?",
+      "answer": "No novel datasets were generated or deposited. The study exclusively utilizes existing experimental thermophysical property data for carbon dioxide retrieved from the NIST Chemistry WebBook (Linstrom and Mallard, 2005). This database is publicly accessible, facilitating data availability. Specific data points used for regression (236 points across defined temperature and pressure ranges) are described, though the raw data points from NIST are not individually listed within the paper.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "Is the computational code for the model or analysis shared publicly?",
+      "answer": "The paper does not explicitly mention or provide links to any publicly available computational code (e.g., on GitHub or as supplementary files) used for implementing the VT-CPPC-SAFT EOS or for performing the data analysis and parameter regression. However, the complete mathematical equations and all final regressed parameters are provided within the paper (e.g., Table 2), which enables independent coding and reproduction of the model's calculations.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What specific protocols are described to enable the replication of the model's development and parameterization?",
+      "answer": "The study details several aspects critical for replication:\n1.  **Base Model Selection:** The use of the perturbed-chain SAFT (PC-SAFT) EOS as the foundational model.\n2.  **Parametrization Method:** The adoption of the parametrization method proposed by Anoune et al. (2021) to exactly reproduce the experimental critical temperature and pressure, referencing their work for polynomial correlations and numerical values of PC-SAFT parameters.\n3.  **Volume Translation Model:** The introduction of a new nonlinear temperature-dependent volume translation model (Equation 5) with a Gaussian-like function.\n4.  **Objective Function for Fitting:** The exact objective function (Equation 6) used to minimize deviations and determine the coefficients (A, B, C) for the volume translation term.\n5.  **Data for Fitting:** The temperature and pressure ranges (0.73 T\textsubscript{c} to 0.99 T\textsubscript{c}; 0.7 P\textsubscript{c} to 3 P\textsubscript{c}) and number of data points (236) used for the regression are specified.\n6.  **Regressed Parameters:** All resulting parameters (Table 2) necessary to define the VT-CPPC-SAFT EOS are explicitly provided.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "How were the critical point reproduction capabilities of the model validated?",
+      "answer": "The model's ability to accurately reproduce the critical pressure and critical temperature of CO\textsubscript{2} was a primary validation criterion. This was achieved by incorporating a parametrization method (from Anoune et al., 2021) that constrains the model to satisfy the conditions where the first and second derivatives of pressure with respect to volume are zero at the critical point (@P/@V|\textunderscore T = 0 and @\textsuperscript{2}P/@V\textsuperscript{2}|\textunderscore T = 0). Initial validation for PC-SAFT (Gross and Sadowski, 2001) showed %ARDs of 2.021 for critical temperature and 9.242 for critical pressure, indicating overestimation, which the new model aims to correct.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What validation procedures were used to assess the accuracy of density and vapor pressure predictions?",
+      "answer": "The accuracy of the VT-CPPC-SAFT EOS in predicting density (liquid, vapor, supercritical phases) and vapor pressure for CO\textsubscript{2} was assessed through extensive comparisons against experimental data from the NIST Chemistry WebBook (Linstrom and Mallard, 2005). The primary quantitative metric used was the average absolute percentage deviation (%AAD), calculated as % AAD = 100/N * sum(|Prop\textunderscore exp - Prop\textunderscore calc|/Prop\textunderscore exp). Additionally, qualitative visual comparisons were presented through various figures showing pressure-volume two-phase envelopes, isotherms, and vapor pressure curves (Figs. 1, 2, 5, 6, 8, 9, 10).",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "How was the performance of the new model compared to existing models?",
+      "answer": "The performance of the newly developed VT-CPPC-SAFT EOS was directly compared with three previously established SAFT-type EOSs: the original PC-SAFT (Gross and Sadowski, 2001), CPPC-SAFT (Anoune et al., 2021), and the industrialized version of PC-SAFT EOS (I-PC-SAFT) (Moine et al., 2019). This comparison was carried out using the %AAD metric for various properties (vapor pressure, saturated densities, phase-specific densities) and also through visual plots, demonstrating the superiority of the proposed model in density predictions and vapor pressure accuracy (Tables 3-5, Figs. 5, 6, 8, 9, 10).",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What quality control measures or consistency checks were performed on the model, and what limitations were identified?",
+      "answer": "A crucial quality control measure for the theoretical model was the evaluation of its thermodynamic consistency, specifically checking for the \"crossover\" issue in pressure-volume isotherms. This was assessed using a criterion previously developed by Shi and Li (2016). The testing revealed that while no crossover issues appeared at pressures below 73.773 MPa (10 P\textsubscript{c}), a crossover did appear at 90.980 MPa (12.335 P\textsubscript{c}) in the temperature range of 0.85 T\textsubscript{c} - 0.9 T\textsubscript{c}. This identified a clear limitation: the proposed VT-CPPC-SAFT model can be safely used only at pressures below 90.980 MPa, which is a transparent disclosure of its valid application range.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "Discuss the strengths of the research in terms of rigor and transparency.",
+      "answer": "The research exhibits significant rigor and transparency. Rigor is demonstrated through the detailed mathematical derivation of the model, the use of a well-defined objective function for parameter regression, and the comprehensive validation against a high-quality, publicly accessible experimental dataset (NIST Chemistry WebBook). The comparative analysis with multiple established models provides strong evidence for the new model's improved performance. Transparency is upheld by explicitly providing all regressed parameters, detailing the parameterization method, and clearly stating the data sources. Crucially, the authors also transparently report the limitations of their model, such as the pressure range beyond which thermodynamic consistency issues arise (crossover phenomenon), which is essential for proper application by other researchers.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "Are there any areas where the research could further enhance its rigor and transparency, particularly concerning reproducibility?",
+      "answer": "While the mathematical formulation and parameters are well-documented, a key area for further enhancing reproducibility is the explicit sharing of computational code. Although the model can be re-implemented from the provided equations and parameters, sharing the actual scripts or software used for calculations and parameter regression (e.g., on a public code repository like GitHub) would significantly reduce the effort for other researchers to reproduce the exact computational results and would also help verify the implementation details. This would lower the barrier to replication and facilitate broader adoption and testing of the model.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What specific external data sources were used for validating the model's predictions?",
+      "answer": "The primary external data source for validating the model's predictions was the NIST Chemistry WebBook (Linstrom and Mallard, 2005). This database provided the experimental values for critical temperature and pressure, vapor pressure curves, and pressure-volume two-phase envelopes, as well as liquid, vapor, and supercritical phase densities of CO\textsubscript{2}, against which the model's performance was evaluated.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "How does the paper ensure that the specific parameters of the new model can be reproduced or utilized by others?",
+      "answer": "The paper ensures parametric reproducibility by explicitly listing all the re-optimized parameters for the PC-SAFT EOS (m, r, e/k) and the regressed coefficients (A, B, C) for the new temperature-dependent volume translation model in Table 2. These numerical values are directly usable by other researchers to implement and apply the VT-CPPC-SAFT EOS without needing to perform the parameter regression themselves, significantly contributing to the replicability of the model's outputs.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "In what ways does this study contribute to the general goal of reproducibility in model-based research?",
+      "answer": "This study contributes to reproducibility in model-based research by providing a clear, detailed mathematical framework of a new equation of state. It specifies the underlying physical principles, the exact equations, the parameterization strategy, the objective function used for fitting, and critically, all the numerical values of the regressed parameters. By relying on publicly accessible, high-quality experimental data for validation and comparative analysis, the authors ensure that the reference points for evaluating the model's performance are transparent and available to the wider scientific community. This allows for independent implementation, testing, and validation of the model.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "How does the study leverage existing methodologies to enhance its own reproducibility?",
+      "answer": "The study enhances its reproducibility by explicitly leveraging and referencing existing, well-established methodologies. For instance, the parametrization method from Anoune et al. (2021) is adopted to ensure accurate reproduction of critical points. Similarly, the thermodynamic consistency check relies on a criterion developed by Shi and Li (2016). By building upon and clearly citing these validated approaches, the paper implicitly directs readers to the foundational steps and rationale, making the overall methodology more traceable and, therefore, more reproducible.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What is the quality and accessibility of the experimental data used in this study?",
+      "answer": "The experimental data used in this study (critical temperature, critical pressure, vapor pressure, and densities) are sourced from the NIST Chemistry WebBook (Linstrom and Mallard, 2005). NIST (National Institute of Standards and Technology) is a highly reputable and authoritative source for thermophysical property data, known for its rigorous experimental measurements and data curation, thus ensuring high quality. The NIST WebBook is publicly accessible online, making all reference data readily available to any researcher wishing to verify or extend the work.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "How is the model's performance rigorously reported to facilitate evaluation by others?",
+      "answer": "The model's performance is rigorously reported using quantitative metrics, specifically the average absolute percentage deviation (%AAD), for various thermodynamic properties (vapor pressure, saturated liquid and vapor densities, and densities in liquid, vapor, and supercritical phases). These %AAD values are summarized in tables (Tables 3, 4, 5) for direct numerical comparison with other models. Additionally, detailed visual comparisons in figures (Figs. 5, 6, 8, 9, 10, 11) provide qualitative insights into the model's fit across different conditions, complementing the quantitative data.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "How does the level of transparency in this paper potentially impact the adoption and further development of the proposed model?",
+      "answer": "The high level of transparency, particularly the explicit provision of mathematical equations, the parameterization methodology, and all regressed model parameters, significantly lowers the barrier for other researchers to understand, implement, and apply the VT-CPPC-SAFT EOS. This clarity facilitates easier adoption of the model in other studies or engineering applications. Furthermore, by clearly outlining the model's strengths and its identified limitations (e.g., pressure range), the paper provides a solid foundation for future work, enabling researchers to build upon this model, refine it, or extend it to other compounds, thus promoting scientific progress.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "How does the authorship contribution statement relate to research transparency?",
+      "answer": "The CRediT (Contributor Roles Taxonomy) authorship contribution statement explicitly delineates the specific roles and responsibilities of each author in the research process. For example, Jialin Shi is credited with \"Conceptualization, Methodology, Validation, Formal analysis, Investigation, Writing – original draft, Writing – review & editing, Visualization,\" while Huazhou Li is credited with \"Conceptualization, Methodology, Validation, Formal analysis, Writing – review & editing, Supervision, Project administration, Funding acquisition.\" This transparency in individual contributions enhances accountability and provides clarity on who was responsible for key aspects of the study, including methodology and validation, which are critical for research rigor and reproducibility.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "What measures were taken to address potential biases or conflicts of interest in the study?",
+      "answer": "The authors included a \"Declaration of Competing Interest\" statement, explicitly declaring that they have \"no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.\" This declaration is a standard transparency measure in scientific publishing, aimed at mitigating potential biases that might arise from financial or personal conflicts of interest, thereby enhancing the perceived objectivity and trustworthiness of the research findings.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    },
+    {
+      "question": "How does the paper discuss future steps for extending the model's applicability and reproducibility?",
+      "answer": "In the conclusions, the paper states that \"The proposed strategy can be extended to other pure compounds in future studies.\" This suggests the generalizability of the developed methodology beyond carbon dioxide and implicitly invites future research to apply and validate the model for a wider range of substances. This statement points towards future reproducibility by encouraging other researchers to replicate the strategy for different systems, thereby broadening the model's proven applicability and utility.",
+      "reference": "Shi, J., & Li, H. (2022). Modified temperature-dependent volume translation model in PC-SAFT equation of state for carbon dioxide. *Chemical Engineering Science*, *263*, 118107. https://doi.org/10.1016/j.ces.2022.118107"
+    }
+  ]
+}
