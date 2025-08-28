@@ -1,0 +1,26 @@
+What are the figures in the paper, what do they represent and why are they important? Provide APA-style reference.
+
+**Example Output:**
+```json
+{
+  "pairs": [
+    {
+      "question": "What is Figure 1 and what does it represent and how is it important to the research presented?",
+      "answer": "Figure 1 is a phase diagram...",
+      "reference": "Williams, J., Davis, S., & Kumar, A. (2024). Transparent and reproducible biomarker discovery through multi-institutional collaboration. *Nature Methods*, 21(9), 1567-1579. https://doi.org/10.1038/s41592-024-02387-9"
+    },
+    {
+      "question": "What is Figure 2 and what does it represent and how is it important to the research presented?",
+      "answer": "Figure 2 is a phase diagram...",
+      "reference": "Williams, J., Davis, S., & Kumar, A. (2024). Transparent and reproducible biomarker discovery through multi-institutional collaboration. *Nature Methods*, 21(9), 1567-1579. https://doi.org/10.1038/s41592-024-02387-9"
+    }
+  ]
+}
+```
+
+Output as many pairs of question/answer/reference as needed to summarize the content. 
+The output must be pure JSON without any markdown fencing.  Escape any special characters using JSON appropriate escaping.
+The output must be JSON only.  Do not include any additional information of any kind.
+Don't nest JSON inside the question, answer or reference attributes.
+Replace any non-ASCII or special characters with LaTeX (preferred) or simple text equivalent.
+You must properly escape any markdown characters that are not allowed in raw JSON.  If you are outputting LaTeX, ensure the backslashes are escaped as double backslashes.

@@ -19,7 +19,7 @@ For each figure, graph, chart, or diagram in this paper, describe the importance
 }
 ```
 
-Output as many pairs of question/answer/reference as needed to summarize the content. Try to generate at least 10 pairs.  If you can generate 20-30 pairs given the information that would be better.
+Output as many pairs of question/answer/reference as needed to summarize the content. 
 The output must be pure JSON without any markdown fencing.  Escape any special characters using JSON appropriate escaping.
 The output must be JSON only.  Do not include any additional information of any kind.
 Don't nest JSON inside the question, answer or reference attributes.
