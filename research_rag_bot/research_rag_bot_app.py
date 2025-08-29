@@ -371,7 +371,7 @@ def create_embeddings(embedding_type, embedding_model, ollama_base_url=None):
 
 # --- FAISS Specific Functions ---
 
-def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_model, model_type, model_name, ollama_base_url_llm=None, ollama_base_url_embedding=None, llm_temperature=0.2, llm_top_p=0.95, indexing_batch_size=100, batch_delay_seconds=1):
+def create_or_update_vector_store(docs_dir, db_path, embedding_type, embedding_model, model_type, model_name, ollama_base_url_llm=None, ollama_base_url_embedding=None, llm_temperature=1.0, llm_top_p=0.95, indexing_batch_size=100, batch_delay_seconds=1):
     """
     Creates a new FAISS vector store or updates an existing one.
     Includes metadata extraction using the specified LLM.
@@ -810,7 +810,7 @@ def load_vector_store(db_path, embedding_type, embedding_model, ollama_base_url=
 
 # --- Rest of the Functions (LLM creation and Conversation Init updated) ---
 
-def create_llm(model_type, model_name, ollama_base_url=None, temperature=0.2, top_p=0.95, apply_system_prompt=True):
+def create_llm(model_type, model_name, ollama_base_url=None, temperature=1.0, top_p=0.95, apply_system_prompt=True):
     """Create the appropriate LLM based on model type, name, temperature, and top_p"""
     try:
         model_kwargs = {}
@@ -885,7 +885,7 @@ def create_llm(model_type, model_name, ollama_base_url=None, temperature=0.2, to
          print(f"Error creating LLM {model_name} ({model_type}) with temp={temperature}, top_p={top_p}: {e}")
          return None
 
-def initialize_conversation(vector_store, model_type, model_name, k_value=10, ollama_base_url_llm=None, use_reranking=False, num_chunks_kept=4, llm_temperature=0.2, llm_top_p=0.95):
+def initialize_conversation(vector_store, model_type, model_name, k_value=10, ollama_base_url_llm=None, use_reranking=False, num_chunks_kept=4, llm_temperature=1.0, llm_top_p=0.95):
     """Initialize the conversation chain with temperature, top_p, and system prompt"""
     st.sidebar.write("Initializing conversation chain...")
     try:
@@ -1351,7 +1351,7 @@ if 'use_reranking' not in st.session_state:
 if 'num_chunks_kept' not in st.session_state:
     st.session_state.num_chunks_kept = 4
 if 'temperature' not in st.session_state:
-    st.session_state.temperature = 0.2 # Default temperature
+    st.session_state.temperature = 1.0 # Default temperature
 if 'top_p' not in st.session_state: # New session state for top_p
     st.session_state.top_p = 0.95 # Default top_p
 if 'indexing_batch_size' not in st.session_state:
@@ -1608,7 +1608,7 @@ with st.sidebar:
             max_value=1.0,
             value=st.session_state.temperature, # Use session state default/current
             step=0.05,
-            help="Controls randomness in LLM responses. Lower = more deterministic, Higher = more creative/varied. Default is 0.2.",
+            help="Controls randomness in LLM responses. Lower = more deterministic, Higher = more creative/varied. Default is 1.0.",
             key="llm_temperature_slider" # Unique key
         )
         st.session_state.temperature = temperature
