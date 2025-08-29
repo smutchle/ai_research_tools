@@ -837,12 +837,11 @@ def create_llm(model_type, model_name, ollama_base_url=None, temperature=1.0, to
                 return None
             model_kwargs["top_p"] = top_p
             # System message handled via ChatPromptTemplate
-            if model_name.startswith("gpt-4o"): # Check for specific model names if needed
+            if model_name.startswith("gpt-5") or model_name.startswith("gpt-4"): # Check for specific model names if needed
                 return ChatOpenAI(
                     model=model_name,
                     openai_api_key=api_key,
-                    temperature=temperature, # Ensure temperature is passed
-                    model_kwargs=model_kwargs
+                    temperature=1.0
                 )
             else:
                 return ChatOpenAI(
