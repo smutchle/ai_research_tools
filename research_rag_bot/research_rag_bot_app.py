@@ -854,7 +854,7 @@ def create_llm(model_type, model_name, ollama_base_url=None, temperature=1.0, to
             api_key = os.getenv("CLAUDE_API_KEY")
             if not api_key:
                  return None
-            model_kwargs["top_p"] = top_p
+            # model_kwargs["top_p"] = top_p
             # Anthropic Chat models can take a 'system' parameter.
             return ChatAnthropic(
                 model=model_name,
