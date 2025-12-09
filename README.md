@@ -1,13 +1,10 @@
 ## AI Research Tools
 
-There are currently 4 tools in the AI Research tools platform.
+There is currently one tool in the AI Research tools platform.
 
 [YouTube Video](https://www.youtube.com/watch?v=p4ygW6npE3Y)
 
-1. **Web Researcher** - For finding new research papers on the web (i.e. web scraping)
-2. **References Bot** - For extracting references from PDF papers into APA format using a LLM
-3. **RAG Chatbot** - A tool to convert your PDF, markdown or text files to a vector database and allow you to chat over them using advanced Retrieval Augmented Generation (RAG). Includes advanced LLM re-ranking techniques, etc.
-4. **Knowledge Distiller** - A tool for extracting scientific literature meta-data from a corpus of PDF, markdown or text files and then through filtering and prompting creating a distilled data set for use with LLMs. Essentially, human-in-the-loop distillation of scientific literature content. This is useful when you have a large context window LLM but need some level of distillation of many papers.
+1. **RAG Chatbot** - A tool to convert your PDF, markdown or text files to a vector database and allow you to chat over them using advanced Retrieval Augmented Generation (RAG). Includes advanced LLM re-ranking techniques, etc.
 
 ### Preconfiguration
 
